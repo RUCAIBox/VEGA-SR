@@ -14,8 +14,8 @@ paper artifacts are versioned under `paper_artifacts/`.
 ## Install
 
 ```bash
-git clone https://github.com/FightingYiHong/VL-LoopSR.git
-cd VL-LoopSR
+git clone https://github.com/RUCAIBox/VEGA-SR.git
+cd VEGA-SR
 python3 -m venv .venv
 source .venv/bin/activate
 pip install -r requirements.txt
