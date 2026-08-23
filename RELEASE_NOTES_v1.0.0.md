@@ -33,5 +33,6 @@ release therefore does not make a fully sealed-test claim.
 The Proposer LoRA adapter is distributed separately through the versioned
 [Hugging Face model repository](https://huggingface.co/liuyihong/qwen3-vl-32b-proposer-sr-lora/tree/v1.0.0)
 because model weights are intentionally excluded from this code repository.
-Its final distribution license remains an author decision; the model card uses
-the non-inferential `other` value until that decision is recorded.
+The VEGA-SR source code and Proposer LoRA adapter are distributed under the
+Apache License 2.0. Third-party dependencies and benchmark assets retain their
+respective upstream terms.

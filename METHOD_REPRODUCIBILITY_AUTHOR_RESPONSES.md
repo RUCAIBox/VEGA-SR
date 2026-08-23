@@ -10,7 +10,7 @@
 | 常数拟合初始化、边界、重启和容差 | 可补充 | SciPy `least_squares`；无边界；TRF；`ftol=xtol=gtol=1e-8`；确定性初始化与分阶段重启策略见下文 |
 | NED 实现、编辑代价和规范化 | 可补充 | 仓库内自实现的有序树编辑距离；插入、删除、替换均为单位代价；常数统一为 `Const` |
 | EMPS 三个受保护模板 | 可补充 | 三个完整表达式已从实验 YAML 核实，见下文 |
-| LoRA、代码和数据固定版本及 DOI | 部分可补充 | 代码与 PSE 实验产物已提交并推送；LoRA adapter 已公开并标记 `v1.0.0`；Zenodo 必填的许可证和 Creator 尚待作者确认 |
+| LoRA、代码和数据固定版本及 DOI | 部分可补充 | 代码与 PSE 实验产物已提交并推送；LoRA adapter 已公开并标记 `v1.0.0`；代码与 adapter 均已确认 Apache-2.0；Zenodo Creator 已确认为 `RUCAIBox` |
 | SFT 9,800/200 是否任务分组 | 不能作肯定声明 | 配置只记录 `val_size: 0.02`，没有 group-aware split 或划分清单；只能表述为样本级 9,800/200 划分 |
 
 ## 1. Qwen3-VL-32B-Instruct 推理配置
@@ -162,7 +162,7 @@ LoRA adapter 公开地址：
 ```text
 https://huggingface.co/liuyihong/qwen3-vl-32b-proposer-sr-lora
 tag=v1.0.0
-commit=3730ede3007487bdba935b65f469023e11d3b85e
+commit=21648fa93c594bb0f2ecc43c345f96b53f3ea3bb
 ```
 
 本地 LoRA 产物：
@@ -207,10 +207,9 @@ csv.tar sha256=24aa77353b036c6962de7d339916f07c7b675ed230b182ccaa4b8d8a4385295c
 ### 目前不能声称已经完成的事项
 
 1. 尚未建立论文对应的 GitHub release 和 Zenodo DOI。
-2. 代码与 adapter 的最终发行许可证尚未由作者确认；adapter 模型卡暂用 `license: other`，不推测填写。
-3. SFT adapter 的 `adapter_config.json` 中 `revision=null`。当前本地基础模型目录可恢复出 revision `0cfaf...`，但没有证据证明 SFT 训练开始时使用的基础模型快照也已被显式固定到该 revision。
+2. SFT adapter 的 `adapter_config.json` 中 `revision=null`。当前本地基础模型目录可恢复出 revision `0cfaf...`，但没有证据证明 SFT 训练开始时使用的基础模型快照也已被显式固定到该 revision。
 
-在论文中填写 DOI 前，作者仍需确认许可证与作者元数据，在 Zenodo 中开启 GitHub 仓库归档，再创建 GitHub release，最后把 DOI 和归档提交号回填论文。
+代码与 adapter 均已由作者确认为 Apache-2.0，Zenodo Creator 已确认为机构 `RUCAIBox`。在论文中填写 DOI 前，只剩在 Zenodo 中开启 GitHub 仓库归档，再创建 GitHub release，最后把 DOI 和归档提交号回填论文。
 
 ### 许可证核查与最小作者输入
 
@@ -218,12 +217,12 @@ csv.tar sha256=24aa77353b036c6962de7d339916f07c7b675ed230b182ccaa4b8d8a4385295c
 
 | 对象 | 当前许可状态 | 对本项目的含义 |
 |---|---|---|
-| VEGA-SR 代码仓库 | 根目录尚无 `LICENSE` | 公开可见不等于授权他人复制、修改和分发；建立可复用的软件归档前应由权利人选定许可证。 |
+| VEGA-SR 代码仓库 | Apache-2.0 | 根目录 `LICENSE` 已收录完整 Apache License 2.0 文本；第三方依赖、benchmark 数据和上游资产仍保留各自条款。 |
 | Qwen3-VL-32B-Instruct | Apache-2.0 | 这是 LoRA 基础模型的上游许可，但不会自动替 VEGA-SR 原创代码或 SFT 语料选定许可证。 |
 | PSE | MIT | 当前实验固定并调用上游 PSE；如将 PSE 代码实质复制进发行物，必须保留其 MIT 版权和许可通知。 |
-| 已公开 LoRA adapter | 模型卡暂为 `other` | 文件现已可下载，但最终复用权限尚不清晰；作者确认后应立即更新模型卡。 |
+| 已公开 LoRA adapter | Apache-2.0 | 模型卡元数据和许可说明已更新，并与基础模型许可保持一致。 |
 
-Zenodo 对公开记录的 `License` 和 `Creators` 都规定为必填字段。Zenodo 默认许可证是 CC-BY-4.0，但对软件归档不应不经判断地接受该默认值。根据当前上游关系，若 VEGA-SR 原创代码、LoRA adapter 和训练资产均由作者持有充分授权，将代码与 adapter 同时选为 `Apache-2.0` 是与 Qwen 基础模型一致且便于复现的方案；这仍必须由权利人确认，不能由代码或基础模型的许可证自动推导。如 SFT 语料或数据归档受独立条款约束，应在 Zenodo 中记录混合许可，而不是统一套用软件许可证。
+Zenodo 对公开记录的 `License` 和 `Creators` 都规定为必填字段。本次已根据作者确认将两者分别固定为 `Apache-2.0` 和 `RUCAIBox`，并写入根目录 `.zenodo.json`。Zenodo 归档将以软件为主资源；第三方依赖、benchmark 数据和其他上游资产仍保留各自条款，不因根仓库许可证而被重新授权。
 
 作者信息的最小要求为：
 
@@ -233,14 +232,14 @@ Zenodo 对公开记录的 `License` 和 `Creators` 都规定为必填字段。Ze
 
 官方依据：[Zenodo Creators](https://help.zenodo.org/docs/deposit/describe-records/creators/)、[Zenodo Licenses and rights](https://help.zenodo.org/docs/deposit/describe-records/licenses/)、[GitHub Licensing a repository](https://docs.github.com/en/repositories/managing-your-repositorys-settings-and-features/customizing-your-repository/licensing-a-repository)、[Qwen3-VL-32B-Instruct model card](https://huggingface.co/Qwen/Qwen3-VL-32B-Instruct)。
 
-因此，为完成 DOI 发布，作者现在只需要回复两类信息：
+本次作者已确认：
 
 ```text
-1. license: 代码和 LoRA 是否均采用 Apache-2.0；如果不是，分别指定。
-2. creators: 至少一个个人或机构名称，并按 DOI 引文顺序列出。
+license: Apache-2.0（VEGA-SR 代码和 LoRA adapter）
+creators: RUCAIBox
 ```
 
-其余元数据可从仓库、发布说明和已固定的版本信息生成，不再要求作者手工提供。
+其余元数据已从仓库、发布说明和已固定的版本信息生成，不再要求作者手工提供。
 
 在此之前，建议只保留如下占位表述，不要填写虚假 DOI：
 
@@ -260,4 +259,4 @@ Zenodo 对公开记录的 `License` 和 `Creators` 都规定为必填字段。Ze
 
 ## 建议回传给论文修改方的最简答复
 
-前四项现在均已有可核实的精确答案，可据本文件直接补入 Methods/Supplement。第五项的代码、PSE 结果与 LoRA adapter 已公开；还需作者确认许可证，并提供 Zenodo 必填的至少一个 Creator 名称及顺序。ORCID、单位、邮箱和通讯作者标记不是本次 DOI 发布的必填信息。此后通过 Zenodo 归档 GitHub release 生成 DOI。SFT 的 9,800/200 划分只能称为 2% 样本级划分，不能称为按任务分组；建议保留描述性分析限定。
+前四项现在均已有可核实的精确答案，可据本文件直接补入 Methods/Supplement。第五项的代码、PSE 结果与 LoRA adapter 已公开；代码与 adapter 均已确认为 Apache-2.0，Zenodo Creator 已确认为 `RUCAIBox`，并已写入发布元数据。现在只剩通过 Zenodo 归档 GitHub release 生成 DOI。SFT 的 9,800/200 划分只能称为 2% 样本级划分，不能称为按任务分组；建议保留描述性分析限定。

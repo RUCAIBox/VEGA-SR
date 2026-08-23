@@ -83,8 +83,7 @@ as a checkpoint-only causal estimate.
 The versioned Proposer LoRA adapter is available at
 [Hugging Face](https://huggingface.co/liuyihong/qwen3-vl-32b-proposer-sr-lora)
 (`v1.0.0`). Its model card records the training configuration, limitations and
-SHA-256 integrity manifest. The adapter license is temporarily recorded as
-`other` until the authors select the final distribution license.
+SHA-256 integrity manifest. The adapter is distributed under Apache-2.0.
 
 ## PSE real-world comparison
 
@@ -134,5 +133,12 @@ pytest -q
 ```
 
 Do not commit `.env`, model weights, downloaded datasets, generated splits,
-logs or raw `results/` directories. Add the project license before publishing
-the archival code release.
+logs or raw `results/` directories.
+
+## License
+
+VEGA-SR source code is licensed under the
+[Apache License 2.0](LICENSE). The separately distributed Proposer LoRA adapter
+uses the same license. This license does not relicense third-party dependencies,
+benchmark datasets, or other upstream assets, which retain their respective
+terms and attribution requirements.

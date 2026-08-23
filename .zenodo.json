@@ -1,0 +1,18 @@
+{
+  "creators": [
+    {
+      "name": "RUCAIBox"
+    }
+  ],
+  "title": "VEGA-SR: Multimodal reasoning and agentic evaluation for self-refining symbolic regression",
+  "access_right": "open",
+  "license": "Apache-2.0",
+  "upload_type": "software",
+  "keywords": [
+    "symbolic regression",
+    "multimodal reasoning",
+    "large language models",
+    "scientific machine learning",
+    "reproducible research"
+  ]
+}
