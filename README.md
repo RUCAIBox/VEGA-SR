@@ -80,6 +80,12 @@ The SFT before–after result in the paper is a descriptive archived comparison:
 the intended matched SFT-side run was incomplete, so it must not be interpreted
 as a checkpoint-only causal estimate.
 
+The versioned Proposer LoRA adapter is available at
+[Hugging Face](https://huggingface.co/liuyihong/qwen3-vl-32b-proposer-sr-lora)
+(`v1.0.0`). Its model card records the training configuration, limitations and
+SHA-256 integrity manifest. The adapter license is temporarily recorded as
+`other` until the authors select the final distribution license.
+
 ## PSE real-world comparison
 
 The PSE-aligned real-world comparison is configured by
@@ -129,4 +135,4 @@ pytest -q
 
 Do not commit `.env`, model weights, downloaded datasets, generated splits,
 logs or raw `results/` directories. Add the project license before publishing
-the archival release.
+the archival code release.

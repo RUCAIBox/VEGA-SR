@@ -10,7 +10,7 @@
 | 常数拟合初始化、边界、重启和容差 | 可补充 | SciPy `least_squares`；无边界；TRF；`ftol=xtol=gtol=1e-8`；确定性初始化与分阶段重启策略见下文 |
 | NED 实现、编辑代价和规范化 | 可补充 | 仓库内自实现的有序树编辑距离；插入、删除、替换均为单位代价；常数统一为 `Const` |
 | EMPS 三个受保护模板 | 可补充 | 三个完整表达式已从实验 YAML 核实，见下文 |
-| LoRA、代码和数据固定版本及 DOI | 部分可补充 | 本地 adapter、代码和数据哈希可提供；尚无公开下载地址或 DOI，且当前实验改动尚未提交 |
+| LoRA、代码和数据固定版本及 DOI | 部分可补充 | 代码与 PSE 实验产物已提交并推送；LoRA adapter 已公开并标记 `v1.0.0`；Zenodo DOI 尚待建立 |
 | SFT 9,800/200 是否任务分组 | 不能作肯定声明 | 配置只记录 `val_size: 0.02`，没有 group-aware split 或划分清单；只能表述为样本级 9,800/200 划分 |
 
 ## 1. Qwen3-VL-32B-Instruct 推理配置
@@ -155,7 +155,15 @@ a*qdot + b*tau + c*sign(qdot) + d*abs(qdot) + e
 
 ## 5. LoRA adapter、代码和数据版本
 
-### 目前可以提供的本地标识
+### 已公开的 adapter 与固定标识
+
+LoRA adapter 公开地址：
+
+```text
+https://huggingface.co/liuyihong/qwen3-vl-32b-proposer-sr-lora
+tag=v1.0.0
+commit=3730ede3007487bdba935b65f469023e11d3b85e
+```
 
 本地 LoRA 产物：
 
@@ -168,10 +176,11 @@ adapter_config.json sha256=f9b73ced57f0553ff36de4e1fc9be4b1f0ee3660422a745a8425e
 
 adapter 配置记录了 LoRA rank 16、alpha 32、dropout 0.05，目标模块为 `q_proj、k_proj、v_proj、o_proj、gate_proj、up_proj、down_proj`。顶层产物对应训练完成的最终 step 1,226；`best_model_checkpoint` 和 `best_metric` 均为 `null`，因此不能写成“按最低验证损失选择最佳 checkpoint”。
 
-当前仓库 HEAD：
+已推送的代码仓库及 PSE 实验快照提交：
 
 ```text
-8187fd36d56092f0f0c8c31b16362989a6c61374
+https://github.com/RUCAIBox/VEGA-SR
+d5d15047946717c585bc8baa0886efb517cf9df5
 ```
 
 PSE 固定提交：
@@ -197,16 +206,15 @@ csv.tar sha256=24aa77353b036c6962de7d339916f07c7b675ed230b182ccaa4b8d8a4385295c
 
 ### 目前不能声称已经完成的事项
 
-1. LoRA adapter 目前只有本地路径，没有可公开访问的 Hugging Face/Zenodo 地址。
-2. 尚未建立论文对应的 Zenodo DOI。
-3. 当前 Git HEAD 不能作为本次 PSE real-world 实验的完整代码版本，因为 `pse_realworld_vega_sr.yaml`、运行脚本和结果 Markdown 等仍是未跟踪文件，`.gitignore` 也有未提交修改。
-4. SFT adapter 的 `adapter_config.json` 中 `revision=null`。当前本地基础模型目录可恢复出 revision `0cfaf...`，但没有证据证明 SFT 训练开始时使用的基础模型快照也已被显式固定到该 revision。
+1. 尚未建立论文对应的 GitHub release 和 Zenodo DOI。
+2. 代码与 adapter 的最终发行许可证尚未由作者确认；adapter 模型卡暂用 `license: other`，不推测填写。
+3. SFT adapter 的 `adapter_config.json` 中 `revision=null`。当前本地基础模型目录可恢复出 revision `0cfaf...`，但没有证据证明 SFT 训练开始时使用的基础模型快照也已被显式固定到该 revision。
 
-在论文中填写 DOI 前，作者仍需执行：提交或完整归档实际工作树；建立只读 release/tag；上传代码、配置、数据归档和 adapter；记录许可证与访问条件；由 Zenodo 等服务生成 DOI；最后把公开 URL、DOI 和归档提交号回填论文。
+在论文中填写 DOI 前，作者仍需确认许可证与作者元数据，在 Zenodo 中开启 GitHub 仓库归档，再创建 GitHub release，最后把 DOI 和归档提交号回填论文。
 
 在此之前，建议只保留如下占位表述，不要填写虚假 DOI：
 
-> The exact code snapshot, experiment configurations, SFT corpus, and LoRA adapter will be deposited in a versioned archival repository upon publication. The local artifacts are integrity-checked using the SHA-256 digests reported in the reproducibility record. [Repository URL and DOI to be added after archival release.]
+> The code, experiment configurations, integrity-checked result artifacts, SFT corpus, and versioned LoRA adapter are publicly available from the VEGA-SR GitHub and Hugging Face repositories. A DOI-backed archival code snapshot will be added after the GitHub release is deposited through Zenodo. [DOI to be added after archival release.]
 
 ## 6. SFT 9,800/200 划分的正确表述
 
@@ -222,4 +230,4 @@ csv.tar sha256=24aa77353b036c6962de7d339916f07c7b675ed230b182ccaa4b8d8a4385295c
 
 ## 建议回传给论文修改方的最简答复
 
-前四项现在均已有可核实的精确答案，可据本文件直接补入 Methods/Supplement。第五项只能先补本地文件哈希与固定依赖提交；公开 adapter、提交当前实验工作树以及建立 DOI 仍需作者实际完成。SFT 的 9,800/200 划分只能称为 2% 样本级划分，不能称为按任务分组；建议保留描述性分析限定。
+前四项现在均已有可核实的精确答案，可据本文件直接补入 Methods/Supplement。第五项的代码、PSE 结果与 LoRA adapter 已公开；还需作者确认许可证和作者元数据，并通过 Zenodo 归档 GitHub release 生成 DOI。SFT 的 9,800/200 划分只能称为 2% 样本级划分，不能称为按任务分组；建议保留描述性分析限定。

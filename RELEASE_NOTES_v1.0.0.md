@@ -1,4 +1,4 @@
-# VL-LoopSR v1.0.0 release notes
+# VEGA-SR v1.0.0 release notes
 
 This paper-aligned release adds the reproducible PSE real-world comparison and
 its machine-readable outputs.
@@ -30,6 +30,8 @@ current VEGA-SR fitter still evaluates test-domain predictions while building
 candidate fit records and may reject a numerically invalid expression. This
 release therefore does not make a fully sealed-test claim.
 
-The Proposer LoRA adapter is distributed separately through a versioned model
-repository because model weights are intentionally excluded from this code
-repository.
+The Proposer LoRA adapter is distributed separately through the versioned
+[Hugging Face model repository](https://huggingface.co/liuyihong/qwen3-vl-32b-proposer-sr-lora/tree/v1.0.0)
+because model weights are intentionally excluded from this code repository.
+Its final distribution license remains an author decision; the model card uses
+the non-inferential `other` value until that decision is recorded.
