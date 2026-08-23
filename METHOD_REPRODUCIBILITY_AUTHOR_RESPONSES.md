@@ -241,9 +241,11 @@ creators: RUCAIBox
 
 其余元数据已从仓库、发布说明和已固定的版本信息生成，不再要求作者手工提供。
 
-在此之前，建议只保留如下占位表述，不要填写虚假 DOI：
+在 Nature Computational Science 初次投稿阶段，不必保留 DOI 占位符。应只报告已经公开且可核验的固定版本：
 
-> The code, experiment configurations, integrity-checked result artifacts, SFT corpus, and versioned LoRA adapter are publicly available from the VEGA-SR GitHub and Hugging Face repositories. A DOI-backed archival code snapshot will be added after the GitHub release is deposited through Zenodo. [DOI to be added after archival release.]
+> **Code availability.** The source code, experiment configurations, and integrity-checked result artifacts are publicly available in the VEGA-SR GitHub release `v1.0.0` (https://github.com/RUCAIBox/VEGA-SR/releases/tag/v1.0.0; commit `77bfbd5a3707e99c6d9dbd91fa457524bbde1a0b`). The versioned Proposer LoRA adapter is available from Hugging Face at https://huggingface.co/liuyihong/qwen3-vl-32b-proposer-sr-lora/tree/v1.0.0 (commit `21648fa93c594bb0f2ecc43c345f96b53f3ea3bb`).
+
+上述文本不声称尚未生成的 DOI。如后续建立 Zenodo 归档，可在接收或出版前将真实 DOI 及对应参考文献补入，无需在初稿中预留占位符。
 
 ## 6. SFT 9,800/200 划分的正确表述
 
