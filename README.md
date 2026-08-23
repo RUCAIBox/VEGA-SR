@@ -8,13 +8,14 @@ VEGA-SR combines multimodal evidence-guided candidate generation with
 validation-grounded agentic evaluation and feedback. The release contains the
 method, paper-aligned launchers, deterministic data generators and the complete
 10,000-example multimodal Proposer SFT corpus. Downloaded benchmarks, generated
-splits, model weights and results remain outside Git.
+splits, model weights and raw run directories remain outside Git; curated
+paper artifacts are versioned under `paper_artifacts/`.
 
 ## Install
 
 ```bash
-git clone https://github.com/RUCAIBox/VEGA-SR.git
-cd VEGA-SR
+git clone https://github.com/FightingYiHong/VL-LoopSR.git
+cd VL-LoopSR
 python3 -m venv .venv
 source .venv/bin/activate
 pip install -r requirements.txt
@@ -79,6 +80,33 @@ The SFT before–after result in the paper is a descriptive archived comparison:
 the intended matched SFT-side run was incomplete, so it must not be interpreted
 as a checkpoint-only causal estimate.
 
+## PSE real-world comparison
+
+The PSE-aligned real-world comparison is configured by
+[`pse_realworld_vega_sr.yaml`](pse_realworld_vega_sr.yaml). It evaluates PSE,
+PSE-aligned VEGA-SR, PySR and Operon over 20 seeds on EMPS and Roughpipe, with
+an EMPS-only Physics-LS ablation. The paper-ready report is
+[`PSE_REALWORLD_PAPER_RESULTS.md`](PSE_REALWORLD_PAPER_RESULTS.md), and the
+sanitized machine-readable outputs are under
+[`paper_artifacts/pse_realworld/`](paper_artifacts/pse_realworld/).
+
+The explicit candidate-ranking score uses validation metrics rather than test
+metrics. The current VEGA-SR fitter nevertheless evaluates test-domain
+predictions while constructing candidate fit records and may reject a
+numerically invalid expression; this release therefore does not claim that the
+test split remained completely unaccessed during search.
+
+To launch the model service with public defaults:
+
+```bash
+GPU_DEVICES=0,1 \
+MODEL_PATH=Qwen/Qwen3-VL-32B-Instruct \
+bash scripts/launch_pse_realworld_vega_service.sh
+```
+
+Machine-specific interpreter, cache, GPU and endpoint locations are supplied
+through environment variables rather than committed absolute paths.
+
 ## Layout
 
 - `scripts/vega_sr.py`: canonical public VEGA-SR method entry point.
@@ -100,4 +128,5 @@ pytest -q
 ```
 
 Do not commit `.env`, model weights, downloaded datasets, generated splits,
-logs or results. Add the project license before making the repository public.
+logs or raw `results/` directories. Add the project license before publishing
+the archival release.

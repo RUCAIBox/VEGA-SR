@@ -1,0 +1,10 @@
+method,dataset,status,count
+operon,emps,ok,20
+operon,roughpipe,ok,20
+physics_ls,emps,ok,1
+pse,emps,ok,20
+pse,roughpipe,ok,20
+pysr,emps,ok,20
+pysr,roughpipe,ok,20
+vega_sr,emps,ok,20
+vega_sr,roughpipe,ok,20

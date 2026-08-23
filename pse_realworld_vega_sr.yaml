@@ -1,0 +1,155 @@
+schema_version: 1
+
+provenance:
+  pse_article: https://doi.org/10.1038/s43588-025-00904-8
+  pse_repository: https://github.com/intell-sci-comput/PSE
+  pse_commit: 7105caba63e754150dd3b160443984456ec99cd7
+  vega_sr_repository: https://github.com/RUCAIBox/VEGA-SR
+  vega_sr_reference_commit: 8187fd36d56092f0f0c8c31b16362989a6c61374
+  note: >-
+    The PSE commit, raw-data URLs, and SHA-256 digests are pinned so that later
+    changes to either repository do not silently change this experiment.
+
+execution:
+  repeats: 20
+  repeat_seeds: [0, 1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11, 12, 13, 14, 15, 16, 17, 18, 19]
+  case_budget_sec: 90
+  timeout_grace_sec: 30
+  hard_timeout_sec: 600
+  resume: true
+  use_test_for_selection: false
+  method_mode: planner_guided
+  vega_sr_budget:
+    # VEGA-SR's automatic sub-180-second profile disables the critic/refiner
+    # loop entirely.  Keep the complete planner-guided method enabled and let
+    # its internal 90-second deadline stop any unfinished refinement round.
+    full_budget: true
+    allow_full_calls_under_180: true
+    image_loop_max_rounds: 3
+    restore_text_proposer: true
+  vega_llm_seed_policy: role_call_v1
+  data_cache: data/external/pse_realworld
+  results_dir: results/pse_realworld_validation
+  baseline_results_dir: results/pse_realworld_baselines
+  baselines:
+    # PySR and Operon are the two low-friction, directly comparable baselines
+    # from the PSE real-world tables. Candidate selection is validation-only.
+    primary: [pysr, operon]
+    # EMPS-only check separating the value of the supplied physical prior from
+    # the value of VEGA-SR's symbolic-search pipeline.
+    ablations: [physics_ls]
+    selection_metric: validation_reward_eta_0.99
+    pysr:
+      released_emps_niterations: 100
+      released_roughpipe_niterations: 50
+      released_ncycles_per_iteration: 380
+      # Preserve released maximum mutation-cycle counts (100*380 and 50*380)
+      # but make each cycle interruptible so PySR 1.5 honors the deadline.
+      effective_emps_niterations: 38000
+      effective_roughpipe_niterations: 19000
+      timeout_in_seconds: 90
+      deterministic: true
+      parallelism: serial
+      # Stability override for PySR 1.5: check the same wall-clock deadline
+      # more frequently instead of allowing a 380-cycle batch to overrun.
+      ncycles_per_iteration: 1
+      julia_threads: 1
+      blas_threads: 1
+      cpu_cores_per_case: 1
+    operon:
+      objectives: [mse, length]
+      population_size: 1000
+      pool_size: 1000
+      n_threads: 4
+      max_time_seconds: 90
+
+datasets:
+  emps:
+    display_name: EMPS electromechanical positioning system
+    raw_url: https://raw.githubusercontent.com/intell-sci-comput/PSE/7105caba63e754150dd3b160443984456ec99cd7/data/emps/emps.csv
+    sha256: 9c77776a8cdc56354e72ea6ed8e5cf2d94e1c72910d585d2d31742113695b2ee
+    raw_columns: [q, qdot, qddot, tau]
+    features: [q, qdot, tau]
+    target: qddot
+    default_protocol: pse_half_chronological
+    protocols:
+      pse_half_chronological:
+        description: >-
+          Match PSE by reserving the first half of the time series as the
+          discovery half. Split that half chronologically into 80% fitting and
+          20% validation; keep the untouched second half for final testing.
+        discovery_fraction: 0.5
+        inner_fit_fraction: 0.8
+    pse_reference:
+      script: run_realworld_EMPS.py
+      stage_config: model/stages_config/EMPS.yaml
+      time_limit_sec: 90
+      runs: 20
+      n_down_sample: 200
+      top_k: 30
+      use_const: true
+      prun_ndigit: 3
+      add_bias: true
+      paper_operators: ['+', '-', '*', '/', sin, cos, exp, log, cosh, tanh, abs, sign]
+      released_stage_operators: [Add, Mul, SemiSub, SemiDiv, Identity, Sign, Sin, Cos, Exp, Log]
+      reward_eta: 0.99
+    vega_allowed_operators: ['+', '-', '*', '/', sin, cos, exp, log, cosh, tanh, abs, sign]
+    vega_domain_prior:
+      source: >-
+        PSE paper EMPS prior: Newton's second law with viscous and Coulomb
+        friction, M*qddot = -Fv*qdot - Fc*sign(qdot) + tau - c.
+      protected_templates:
+        - a*qdot + b*tau + c*sign(qdot) + d
+        - a*q + b*qdot + c*tau + d*sign(qdot) + e
+        - a*qdot + b*tau + c*sign(qdot) + d*abs(qdot) + e
+      selection_metric: validation_reward_eta_0.99
+      reward_eta: 0.99
+    comparison_metrics:
+      primary: [test_mse, test_nmse, test_r2, expression_complexity]
+      descriptive_pse_alignment: [pse_discovery_half_mse]
+
+  roughpipe:
+    display_name: Nikuradse rough-pipe resistance data
+    raw_url: https://raw.githubusercontent.com/intell-sci-comput/PSE/7105caba63e754150dd3b160443984456ec99cd7/data/roughpipe/nikuradze.csv
+    sha256: f5ea004e268dd182285ec782805a4af69373417bf18183e2df65fdb3fbe352b1
+    raw_columns: [log10_Re, scaled_log10_f, inverse_relative_roughness]
+    features: [x]
+    target: y
+    transform:
+      f: 10**scaled_log10_f / 100
+      Re: 10**log10_Re
+      x: log10(Re * sqrt(f / 32) / inverse_relative_roughness)
+      y: f**(-1/2) + 2*log10(1 / inverse_relative_roughness)
+    default_protocol: pse_transform_fixed_holdout
+    protocols:
+      pse_transform_fixed_holdout:
+        description: >-
+          Use PSE's exact one-dimensional data collapse, then apply a fixed
+          x-stratified 60/20/20 fitting/validation/test split. The split is
+          identical for all 20 method repeats.
+        assignment_cycle: [train, train, train, val, test]
+      roughness_group_holdout:
+        description: >-
+          Optional stronger check that holds out complete roughness series.
+          It is not a direct reproduction of PSE and should be reported as a
+          robustness analysis.
+        train_groups: [15.0, 60.0, 252.0, 507.0]
+        val_groups: [30.6]
+        test_groups: [126.0]
+    pse_reference:
+      script: run_realworld_roughpipe.py
+      stage_config: model/stages_config/turbulence.yaml
+      time_limit_sec: 90
+      runs: 20
+      n_down_sample: 10
+      top_k: 10
+      use_const: true
+      prun_ndigit: 3
+      threshold: 1.0e-6
+      use_replace_expo: false
+      operators: [Add, Mul, Sub, SemiDiv, Identity, Pow2, Pow3, Cos, Cosh, Exp, Log, Sin, Tanh]
+      reward_eta: 0.99
+    vega_allowed_operators: ['+', '-', '*', '/', 'x**2', 'x**3', cos, cosh, exp, log, sin, tanh]
+    comparison_metrics:
+      primary: [test_mse, test_nmse, test_r2, expression_complexity]
+      descriptive_pse_alignment: [pse_full_data_mse]

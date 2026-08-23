@@ -25,6 +25,7 @@ venv/
 runs/
 logs/
 reports/
+results/
 outputs/
 saves/
 paper_figures*/
