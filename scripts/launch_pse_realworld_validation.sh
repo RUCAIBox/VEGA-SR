@@ -5,6 +5,7 @@ ROOT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
 CONFIG_PATH="${CONFIG_PATH:-${ROOT_DIR}/pse_realworld_vega_sr.yaml}"
 METHOD="${METHOD:-pse}"
 DATASET="${DATASET:?set DATASET to emps or roughpipe}"
+VEGA_PROFILE="${VEGA_PROFILE:-}"
 GPU_INDEX="${GPU_INDEX:?set GPU_INDEX to the physical GPU index}"
 PYTHON_BIN="${PYTHON_BIN:?set PYTHON_BIN to the method environment python}"
 RESULTS_DIR="${RESULTS_DIR:-${ROOT_DIR}/results/pse_realworld_validation}"
@@ -34,6 +35,10 @@ PY
     continue
   fi
   echo "[RUN] ${METHOD} ${DATASET} seed=${seed} gpu=${GPU_INDEX}"
+  profile_args=()
+  if [[ "${METHOD}" == "vega_sr" && -n "${VEGA_PROFILE}" ]]; then
+    profile_args=(--vega-profile "${VEGA_PROFILE}")
+  fi
   set +e
   # The upstream PSE timer limits enumeration, but constant fitting happens
   # after that timer.  Keep a separate watchdog so slow post-processing does
@@ -47,6 +52,7 @@ PY
       --gpu-index "${GPU_INDEX}" \
       --budget-sec "${CASE_BUDGET_SEC}" \
       --output "${output_path}" \
+      "${profile_args[@]}" \
       2>&1 | tee "${log_path}"
   case_status=${PIPESTATUS[0]}
   set -e

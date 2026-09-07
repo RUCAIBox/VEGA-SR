@@ -28,6 +28,67 @@ execution:
     image_loop_max_rounds: 3
     restore_text_proposer: true
   vega_llm_seed_policy: role_call_v1
+  # Every VEGA-SR EMPS arm is named and resolved into each per-seed JSON.  The
+  # legacy arm is E7 only; it must never be used for the no-template main table.
+  vega_profiles:
+    legacy_protected_templates:
+      prior_mode: protected_templates
+      selection_metric: validation_reward_eta_0.99
+      reward_eta: 0.99
+      strict_test_isolation: false
+      controls:
+        observer_input_mode: native
+        enable_observer: true
+        enable_vlm_observer: true
+        enable_proposer: true
+        enable_critic_loop: true
+        enable_structural_rescue: true
+        enable_structure_evaluator: true
+        critic_feedback_mode: agentic
+    emps_full_no_template:
+      prior_mode: none
+      selection_metric: validation_reward_eta_0.99
+      reward_eta: 0.99
+      strict_test_isolation: true
+      controls:
+        observer_input_mode: native
+        enable_observer: true
+        enable_vlm_observer: true
+        enable_proposer: true
+        enable_critic_loop: true
+        enable_structural_rescue: true
+        enable_structure_evaluator: true
+        critic_feedback_mode: agentic
+    emps_numeric_only_no_template:
+      prior_mode: none
+      selection_metric: validation_reward_eta_0.99
+      reward_eta: 0.99
+      strict_test_isolation: true
+      controls:
+        # Keeps the observer's numerical summaries but blocks all plot/residual
+        # image inputs, including automatic image generation by the refiner.
+        observer_input_mode: numeric_only
+        enable_observer: true
+        enable_vlm_observer: true
+        enable_proposer: true
+        enable_critic_loop: true
+        enable_structural_rescue: true
+        enable_structure_evaluator: true
+        critic_feedback_mode: agentic
+    emps_no_feedback_no_template:
+      prior_mode: none
+      selection_metric: validation_reward_eta_0.99
+      reward_eta: 0.99
+      strict_test_isolation: true
+      controls:
+        observer_input_mode: native
+        enable_observer: true
+        enable_vlm_observer: true
+        enable_proposer: true
+        enable_critic_loop: false
+        enable_structural_rescue: true
+        enable_structure_evaluator: true
+        critic_feedback_mode: agentic
   data_cache: data/external/pse_realworld
   results_dir: results/pse_realworld_validation
   baseline_results_dir: results/pse_realworld_baselines

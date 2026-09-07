@@ -53,6 +53,11 @@ def parse_args() -> argparse.Namespace:
     parser.add_argument("--output", required=True)
     parser.add_argument("--pse-root", default=str(ROOT / "data" / "external" / "pse"))
     parser.add_argument("--vega-path", default=str(ROOT / "scripts" / "vega_sr.py"))
+    parser.add_argument(
+        "--vega-profile",
+        default=None,
+        help="Named execution.vega_profiles entry. Required for a fair VEGA-SR rerun; omitted preserves legacy behaviour.",
+    )
     parser.add_argument("--agent-api-base", default=os.environ.get("LLMSR_AGENT_API_BASE", "http://127.0.0.1:18001/v1"))
     parser.add_argument("--agent-api-key", default=os.environ.get("LLMSR_AGENT_API_KEY", "EMPTY"))
     parser.add_argument("--agent-model", default=os.environ.get("LLMSR_AGENT_MODEL", "Qwen3-VL-32B-Instruct"))
@@ -326,6 +331,28 @@ def expression_allowed(expr: Any, allowed_operators: list[str]) -> bool:
     return True
 
 
+def resolve_vega_profile(args: argparse.Namespace, config: dict[str, Any]) -> tuple[str, dict[str, Any]]:
+    """Resolve an explicitly recorded VEGA-SR experimental arm.
+
+    The legacy profile remains the default only to keep historical E7 artifacts
+    reproducible.  New EMPS main/ablation runs must select one of the named
+    no-template profiles in the YAML file.
+    """
+    profiles = dict(config.get("execution", {}).get("vega_profiles", {}) or {})
+    profile_name = args.vega_profile or "legacy_protected_templates"
+    if profile_name not in profiles:
+        available = ", ".join(sorted(profiles)) or "<none>"
+        raise ValueError(f"unknown VEGA-SR profile {profile_name!r}; available: {available}")
+    profile = dict(profiles[profile_name] or {})
+    prior_mode = str(profile.get("prior_mode", "protected_templates"))
+    if prior_mode not in {"none", "protected_templates"}:
+        raise ValueError(f"unsupported prior_mode: {prior_mode!r}")
+    selection_metric = str(profile.get("selection_metric", "validation_reward_eta_0.99"))
+    if selection_metric != "validation_reward_eta_0.99":
+        raise ValueError(f"unsupported VEGA-SR selection metric: {selection_metric!r}")
+    return profile_name, profile
+
+
 def run_vega(
     args: argparse.Namespace,
     config: dict[str, Any],
@@ -337,6 +364,7 @@ def run_vega(
     budget_sec: float,
 ) -> dict[str, Any]:
     dataset_config = config["datasets"][args.dataset]
+    profile_name, profile = resolve_vega_profile(args, config)
     features = list(dataset_config["features"])
     random.seed(args.seed)
     np.random.seed(args.seed)
@@ -367,6 +395,21 @@ def run_vega(
     os.environ["LLMSR_V11_RESTORE_TEXT_PROPOSER"] = (
         "1" if vega_budget.get("restore_text_proposer", False) else "0"
     )
+    # Set every controlled switch explicitly so a caller's shell environment
+    # cannot silently turn an ablation back into the full method (or vice versa).
+    controls = dict(profile.get("controls", {}) or {})
+    boolean_controls = {
+        "enable_observer": "LLMSR_V11_ENABLE_OBSERVER",
+        "enable_vlm_observer": "LLMSR_V11_ENABLE_VLM_OBSERVER",
+        "enable_proposer": "LLMSR_V11_ENABLE_PROPOSER",
+        "enable_critic_loop": "LLMSR_V11_ENABLE_CRITIC_LOOP",
+        "enable_structural_rescue": "LLMSR_V11_ENABLE_STRUCTURAL_RESCUE",
+        "enable_structure_evaluator": "LLMSR_V11_ENABLE_STRUCTURE_EVALUATOR",
+    }
+    for key, env_name in boolean_controls.items():
+        os.environ[env_name] = "1" if bool(controls.get(key, True)) else "0"
+    os.environ["LLMSR_V11_OBSERVER_INPUT_MODE"] = str(controls.get("observer_input_mode", "native"))
+    os.environ["LLMSR_V11_CRITIC_FEEDBACK_MODE"] = str(controls.get("critic_feedback_mode", "agentic"))
     vega = import_vega(Path(args.vega_path).resolve())
     llm_seed_policy = str(config["execution"].get("vega_llm_seed_policy", "role_call_v1"))
     if llm_seed_policy != "role_call_v1":
@@ -437,11 +480,14 @@ def run_vega(
             normalized_allowed.append(normalized)
     vega._base.ALLOWED_OPERATORS = normalized_allowed
     domain_prior = dict(dataset_config.get("vega_domain_prior", {}))
-    protected_templates = [
-        str(expr).strip()
-        for expr in domain_prior.get("protected_templates", [])
-        if str(expr).strip()
-    ]
+    prior_mode = str(profile.get("prior_mode", "protected_templates"))
+    protected_templates = []
+    if prior_mode == "protected_templates":
+        protected_templates = [
+            str(expr).strip()
+            for expr in domain_prior.get("protected_templates", [])
+            if str(expr).strip()
+        ]
     invalid_templates = [
         expr for expr in protected_templates
         if not expression_allowed(expr, normalized_allowed)
@@ -450,22 +496,25 @@ def run_vega(
         raise ValueError(f"domain-prior templates use disallowed operators: {invalid_templates}")
     original_propose_initial = vega._base.ProposerAgent.propose_initial
 
-    def propose_initial_with_domain_prior(self, *call_args, **call_kwargs):
+    def propose_initial_with_prior_audit(self, *call_args, **call_kwargs):
         proposal = original_propose_initial(self, *call_args, **call_kwargs)
         existing = list(proposal.get("candidate_exprs", []) or [])
-        proposal["candidate_exprs"] = list(dict.fromkeys(protected_templates + existing))
+        injected_templates = list(protected_templates)
+        if injected_templates:
+            proposal["candidate_exprs"] = list(dict.fromkeys(injected_templates + existing))
         trace = dict(proposal.get("trace", {}) or {})
-        trace["pse_aligned_domain_prior"] = {
-            "source": domain_prior.get("source"),
-            "protected_templates": protected_templates,
-            "candidate_count": len(protected_templates),
+        trace["pse_realworld_prior_audit"] = {
+            "prior_mode": prior_mode,
+            "source": domain_prior.get("source") if injected_templates else None,
+            "protected_template_count": len(injected_templates),
+            "injected_templates": injected_templates,
         }
-        trace["protected_candidate_count"] = int(trace.get("protected_candidate_count") or 0) + len(protected_templates)
+        trace["protected_candidate_count"] = int(trace.get("protected_candidate_count") or 0) + len(injected_templates)
         trace["merged_candidate_count"] = len(proposal["candidate_exprs"])
         proposal["trace"] = trace
         return proposal
 
-    vega._base.ProposerAgent.propose_initial = propose_initial_with_domain_prior
+    vega._base.ProposerAgent.propose_initial = propose_initial_with_prior_audit
     original_evaluate = vega.V11EvaluatorAgent.evaluate
 
     def constrained_evaluate(self, candidate_exprs, dataset, *call_args, **call_kwargs):
@@ -477,8 +526,15 @@ def run_vega(
 
     vega.V11EvaluatorAgent.evaluate = constrained_evaluate
     started = time.time()
+    # TemplateFillTool and direct-evidence helpers calculate a test metric for
+    # every candidate.  In strict mode, never hand them the actual held-out
+    # rows: a validation copy is used solely as an internal compatibility split.
+    # The true test frame stays outside the pipeline and is evaluated below,
+    # after the validation-only selection has completed.
+    strict_test_isolation = bool(profile.get("strict_test_isolation", False))
+    pipeline_test = val.copy() if strict_test_isolation else test
     with TemporaryDirectory(prefix="pse_realworld_vega_") as tmpdir:
-        dataset = vega.build_dataset_from_explicit_splits(train, val, test, Path(tmpdir))
+        dataset = vega.build_dataset_from_explicit_splits(train, val, pipeline_test, Path(tmpdir))
         dataset.source_tag = "pse_realworld"
         row_meta = {
             "task_type": "pse_realworld",
@@ -491,10 +547,10 @@ def run_vega(
         }
         result = vega._run_core_pipeline(dataset=dataset, row_meta=row_meta)
     pipeline_best_expr = result.get("best_expr")
-    selection_metric = domain_prior.get("selection_metric")
+    selection_metric = str(profile.get("selection_metric", "validation_reward_eta_0.99"))
     selection_candidates: list[dict[str, Any]] = []
     if selection_metric == "validation_reward_eta_0.99":
-        eta = float(domain_prior.get("reward_eta", 0.99))
+        eta = float(profile.get("reward_eta", domain_prior.get("reward_eta", 0.99)))
         try:
             history = json.loads(result.get("candidate_evaluation_history") or "[]")
         except (TypeError, json.JSONDecodeError):
@@ -526,9 +582,18 @@ def run_vega(
             result["best_expr"] = selection_candidates[0]["expression"]
             result["selected_validation_reward"] = selection_candidates[0]["validation_reward"]
     result["pipeline_best_expr_before_pse_aligned_selection"] = pipeline_best_expr
-    result["pse_aligned_domain_prior"] = domain_prior
-    result["pse_aligned_selection_metric"] = selection_metric or "vega_default_validation_selection"
+    result["vega_profile"] = profile_name
+    result["vega_profile_config"] = profile
+    result["prior_mode"] = prior_mode
+    result["protected_template_count"] = len(protected_templates)
+    result["injected_templates"] = protected_templates
+    result["pse_aligned_domain_prior"] = domain_prior if prior_mode == "protected_templates" else None
+    result["pse_aligned_selection_metric"] = selection_metric
     result["pse_aligned_selection_candidates"] = selection_candidates
+    result["strict_test_isolation"] = strict_test_isolation
+    result["test_rows_visible_to_search_pipeline"] = 0 if strict_test_isolation else len(test)
+    result["pipeline_compatibility_test_split"] = "validation_copy" if strict_test_isolation else "true_test"
+    result["true_test_evaluated_after_selection"] = True
     result["runtime_sec"] = finite_float(result.get("runtime_sec")) or (time.time() - started)
     result["method"] = "vega_sr"
     result["search_budget_sec"] = float(budget_sec)
@@ -573,12 +638,17 @@ def main() -> int:
         "n_test": len(test),
         "test_used_for_selection": False,
         "config_path": str(config_path),
+        "config_sha256": sha256_file(config_path),
         "pse_commit": config["provenance"]["pse_commit"],
         "vega_sr_reference_commit": config["provenance"]["vega_sr_reference_commit"],
         "started_at_unix": time.time(),
         "configured_timeout_grace_sec": configured_grace_sec,
         "hard_timeout_sec": float(config["execution"].get("hard_timeout_sec", budget_sec + configured_grace_sec)),
     }
+    if args.method == "vega_sr":
+        profile_name, profile = resolve_vega_profile(args, config)
+        base_result["vega_profile"] = profile_name
+        base_result["vega_profile_config"] = profile
     try:
         if args.method == "pse":
             method_result = run_pse(args, config, train, val, test, alignment, full, budget_sec)
