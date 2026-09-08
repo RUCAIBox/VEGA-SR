@@ -593,6 +593,12 @@ def run_vega(
     result["strict_test_isolation"] = strict_test_isolation
     result["test_rows_visible_to_search_pipeline"] = 0 if strict_test_isolation else len(test)
     result["pipeline_compatibility_test_split"] = "validation_copy" if strict_test_isolation else "true_test"
+    result["pipeline_compatibility_test_rows"] = len(pipeline_test)
+    # The core pipeline reports the compatibility frame as ``n_test``.  Keep
+    # the public result schema unambiguous: n_test always means the held-out
+    # test partition used for final reporting.
+    result["n_test"] = len(test)
+    result["true_test_rows"] = len(test)
     result["true_test_evaluated_after_selection"] = True
     result["runtime_sec"] = finite_float(result.get("runtime_sec")) or (time.time() - started)
     result["method"] = "vega_sr"
