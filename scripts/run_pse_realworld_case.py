@@ -410,6 +410,12 @@ def run_vega(
         os.environ[env_name] = "1" if bool(controls.get(key, True)) else "0"
     os.environ["LLMSR_V11_OBSERVER_INPUT_MODE"] = str(controls.get("observer_input_mode", "native"))
     os.environ["LLMSR_V11_CRITIC_FEEDBACK_MODE"] = str(controls.get("critic_feedback_mode", "agentic"))
+    os.environ["LLMSR_V11_FORCE_DIVERSE_LOW_DIM"] = "1" if bool(profile.get("force_diverse_low_dim", False)) else "0"
+    os.environ["LLMSR_V11_DISABLE_HEURISTIC_FALLBACK"] = "1" if bool(profile.get("disable_heuristic_fallback", False)) else "0"
+    for option in ("full_budget_text_calls", "full_budget_mm_calls", "full_budget_proposal_k", "full_budget_refined_k", "full_budget_refine_rounds"):
+        env_name = "LLMSR_V11_" + option.upper()
+        if option in profile:
+            os.environ[env_name] = str(profile[option])
     vega = import_vega(Path(args.vega_path).resolve())
     llm_seed_policy = str(config["execution"].get("vega_llm_seed_policy", "role_call_v1"))
     if llm_seed_policy != "role_call_v1":

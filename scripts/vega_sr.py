@@ -133,6 +133,11 @@ V11_LOW_DIM_FULL_REFINED_K = int(os.environ.get("LLMSR_V11_LOW_DIM_FULL_REFINED_
 V11_LOW_DIM_FULL_REFINE_ROUNDS = int(os.environ.get("LLMSR_V11_LOW_DIM_FULL_REFINE_ROUNDS", "3"))
 V11_LOW_DIM_FULL_SKIP_REFINE_VAL_MSE = float(os.environ.get("LLMSR_V11_LOW_DIM_FULL_SKIP_REFINE_VAL_MSE", "1e-8"))
 V11_ALLOW_FULL_CALLS_UNDER_180 = os.environ.get("LLMSR_V11_ALLOW_FULL_CALLS_UNDER_180", "0").strip().lower() in {"1", "true", "yes", "y"}
+# The default 90-s low-dimensional fast path deliberately collapses proposal
+# diversity and falls back to heuristic agents.  Fair optimization experiments
+# may opt out explicitly while retaining the same wall-clock deadline.
+V11_FORCE_DIVERSE_LOW_DIM = os.environ.get("LLMSR_V11_FORCE_DIVERSE_LOW_DIM", "0").strip().lower() in {"1", "true", "yes", "y"}
+V11_DISABLE_HEURISTIC_FALLBACK = os.environ.get("LLMSR_V11_DISABLE_HEURISTIC_FALLBACK", "0").strip().lower() in {"1", "true", "yes", "y"}
 V11_VLM_OBSERVER_GENERATE_IMAGES = os.environ.get("LLMSR_V11_VLM_OBSERVER_GENERATE_IMAGES", "1").strip().lower() in {"1", "true", "yes", "y"}
 V11_VLM_OBSERVER_MAX_IMAGES = int(os.environ.get("LLMSR_V11_VLM_OBSERVER_MAX_IMAGES", "2"))
 V11_VLM_OBSERVER_MAX_ROWS = int(os.environ.get("LLMSR_V11_VLM_OBSERVER_MAX_ROWS", "32"))
@@ -2081,6 +2086,10 @@ def _maybe_expand_low_dim_budget(iter_cfg, dataset, row_meta):
     )
     tuned["skip_diverse_proposal"] = bool(runtime_sec is not None and runtime_sec < 180.0)
     tuned["force_heuristic_agents"] = bool(runtime_sec is not None and runtime_sec < 180.0)
+    if V11_FORCE_DIVERSE_LOW_DIM:
+        tuned["skip_diverse_proposal"] = False
+    if V11_DISABLE_HEURISTIC_FALLBACK:
+        tuned["force_heuristic_agents"] = False
     tuned["low_dim_full_budget"] = True
     tuned["v11_budget_profile"] = profile["name"]
     return tuned
@@ -2110,6 +2119,10 @@ def _maybe_expand_full_budget(iter_cfg, dataset, row_meta):
     )
     tuned["skip_diverse_proposal"] = bool(runtime_sec is not None and runtime_sec < 180.0)
     tuned["force_heuristic_agents"] = bool(runtime_sec is not None and runtime_sec < 180.0)
+    if V11_FORCE_DIVERSE_LOW_DIM:
+        tuned["skip_diverse_proposal"] = False
+    if V11_DISABLE_HEURISTIC_FALLBACK:
+        tuned["force_heuristic_agents"] = False
     tuned["full_budget"] = True
     tuned["runtime_fast_path_disabled"] = bool(V11_DISABLE_RUNTIME_FAST_PATH or budget_aware)
     tuned["v11_budget_profile"] = profile["name"]

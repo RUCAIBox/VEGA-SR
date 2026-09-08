@@ -89,6 +89,29 @@ execution:
         enable_structural_rescue: true
         enable_structure_evaluator: true
         critic_feedback_mode: agentic
+    emps_full_no_template_diverse:
+      # Optimization arm: same no-template protocol, but restores model-driven
+      # proposal diversity within the fixed 90-s case budget.
+      prior_mode: none
+      selection_metric: validation_reward_eta_0.99
+      reward_eta: 0.99
+      strict_test_isolation: true
+      force_diverse_low_dim: true
+      disable_heuristic_fallback: true
+      full_budget_text_calls: 6
+      full_budget_mm_calls: 2
+      full_budget_proposal_k: 32
+      full_budget_refined_k: 12
+      full_budget_refine_rounds: 3
+      controls:
+        observer_input_mode: native
+        enable_observer: true
+        enable_vlm_observer: true
+        enable_proposer: true
+        enable_critic_loop: true
+        enable_structural_rescue: true
+        enable_structure_evaluator: true
+        critic_feedback_mode: agentic
   data_cache: data/external/pse_realworld
   results_dir: results/pse_realworld_validation
   baseline_results_dir: results/pse_realworld_baselines
