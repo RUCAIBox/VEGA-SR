@@ -138,6 +138,7 @@ V11_ALLOW_FULL_CALLS_UNDER_180 = os.environ.get("LLMSR_V11_ALLOW_FULL_CALLS_UNDE
 # may opt out explicitly while retaining the same wall-clock deadline.
 V11_FORCE_DIVERSE_LOW_DIM = os.environ.get("LLMSR_V11_FORCE_DIVERSE_LOW_DIM", "0").strip().lower() in {"1", "true", "yes", "y"}
 V11_DISABLE_HEURISTIC_FALLBACK = os.environ.get("LLMSR_V11_DISABLE_HEURISTIC_FALLBACK", "0").strip().lower() in {"1", "true", "yes", "y"}
+V11_FORCE_STRUCTURAL_COVERAGE = os.environ.get("LLMSR_V11_FORCE_STRUCTURAL_COVERAGE", "0").strip().lower() in {"1", "true", "yes", "y"}
 V11_VLM_OBSERVER_GENERATE_IMAGES = os.environ.get("LLMSR_V11_VLM_OBSERVER_GENERATE_IMAGES", "1").strip().lower() in {"1", "true", "yes", "y"}
 V11_VLM_OBSERVER_MAX_IMAGES = int(os.environ.get("LLMSR_V11_VLM_OBSERVER_MAX_IMAGES", "2"))
 V11_VLM_OBSERVER_MAX_ROWS = int(os.environ.get("LLMSR_V11_VLM_OBSERVER_MAX_ROWS", "32"))
@@ -3677,6 +3678,28 @@ def _run_core_pipeline(dataset, row_meta):
         )
         initial_exprs = list(initial_prop.get("candidate_exprs", []) or [])
         prop_trace = dict(initial_prop.get("trace", {}) or {})
+        if V11_FORCE_STRUCTURAL_COVERAGE:
+            # Do not trust a collapsed language-model proposal set: reserve
+            # deterministic candidates from distinct algebraic families.
+            manual = build_manual_candidates(list(getattr(dataset, "feature_names", []) or []))
+            forced = []
+            family_seen = set()
+            for expr in manual:
+                text = str(expr)
+                family = (
+                    "piecewise" if "sign(" in text or "Abs(" in text else
+                    "rational" if "/" in text else
+                    "power" if "**" in text else
+                    "interaction" if "*" in text else
+                    "additive"
+                )
+                if family not in family_seen:
+                    forced.append(text)
+                    family_seen.add(family)
+                if len(forced) >= 8:
+                    break
+            initial_exprs = _uniq(initial_exprs + forced)
+            prop_trace["forced_structural_coverage"] = forced
 
         initial_modality_exprs = []
         initial_modality_trace = {}

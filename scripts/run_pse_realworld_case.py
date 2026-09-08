@@ -412,6 +412,7 @@ def run_vega(
     os.environ["LLMSR_V11_CRITIC_FEEDBACK_MODE"] = str(controls.get("critic_feedback_mode", "agentic"))
     os.environ["LLMSR_V11_FORCE_DIVERSE_LOW_DIM"] = "1" if bool(profile.get("force_diverse_low_dim", False)) else "0"
     os.environ["LLMSR_V11_DISABLE_HEURISTIC_FALLBACK"] = "1" if bool(profile.get("disable_heuristic_fallback", False)) else "0"
+    os.environ["LLMSR_V11_FORCE_STRUCTURAL_COVERAGE"] = "1" if bool(profile.get("force_structural_coverage", False)) else "0"
     for option in ("full_budget_text_calls", "full_budget_mm_calls", "full_budget_proposal_k", "full_budget_refined_k", "full_budget_refine_rounds"):
         env_name = "LLMSR_V11_" + option.upper()
         if option in profile:

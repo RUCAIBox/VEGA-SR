@@ -98,6 +98,7 @@ execution:
       strict_test_isolation: true
       force_diverse_low_dim: true
       disable_heuristic_fallback: true
+      force_structural_coverage: true
       full_budget_text_calls: 6
       full_budget_mm_calls: 2
       full_budget_proposal_k: 32
