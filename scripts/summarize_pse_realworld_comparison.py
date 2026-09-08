@@ -55,7 +55,9 @@ def main() -> int:
     ).reset_index()
     summary["invalid_test_predictions"] = summary["completed"] - summary["valid_test_predictions"]
     summary["valid_test_prediction_rate"] = summary["valid_test_predictions"] / summary["completed"]
-    summary["expected"] = summary["method"].map(lambda method: 1 if method == "physics_ls" else 20)
+    summary["expected"] = summary["method"].map(
+        lambda method: 1 if method in {"physics_ls", "linear_ls"} else 20
+    )
     summary["complete"] = summary["completed"] >= summary["expected"]
     summary.to_csv(output / "summary.csv", index=False)
     print(statuses.to_string(index=False))

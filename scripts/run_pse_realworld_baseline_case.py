@@ -42,7 +42,11 @@ from run_pse_realworld_case import (  # noqa: E402
 def parse_args() -> argparse.Namespace:
     parser = argparse.ArgumentParser()
     parser.add_argument("--config", default=str(ROOT / "pse_realworld_vega_sr.yaml"))
-    parser.add_argument("--method", required=True, choices=("pysr", "operon", "physics_ls"))
+    parser.add_argument(
+        "--method",
+        required=True,
+        choices=("pysr", "operon", "gplearn", "linear_ls", "physics_ls"),
+    )
     parser.add_argument("--dataset", required=True, choices=("emps", "roughpipe"))
     parser.add_argument("--seed", required=True, type=int)
     parser.add_argument("--budget-sec", type=float)
@@ -187,6 +191,25 @@ def canonicalize_operon(expression: str, features: list[str]) -> str:
     return str(parsed)
 
 
+def canonicalize_gplearn(expression: str, features: list[str]) -> str:
+    locals_map: dict[str, Any] = {
+        "add": lambda x, y: x + y,
+        "sub": lambda x, y: x - y,
+        "mul": lambda x, y: x * y,
+        "div": lambda x, y: x / y,
+        "sin": sympy.sin,
+        "cos": sympy.cos,
+        "log": lambda x: sympy.log(sympy.Abs(x)),
+        "abs": sympy.Abs,
+        "tanh": sympy.tanh,
+        "sign": sympy.sign,
+        "exp": sympy.exp,
+    }
+    for index, name in enumerate(features):
+        locals_map[f"X{index}"] = sympy.Symbol(name)
+    return str(sympy.sympify(str(expression), locals=locals_map))
+
+
 def run_operon(
     dataset: str,
     seed: int,
@@ -280,6 +303,134 @@ def run_operon(
     }
 
 
+def run_gplearn(
+    dataset: str,
+    seed: int,
+    budget_sec: float,
+    train: pd.DataFrame,
+    val: pd.DataFrame,
+    features: list[str],
+    eta: float,
+) -> dict[str, Any]:
+    """Classic genetic-programming baseline with validation-only selection."""
+    from gplearn.functions import make_function
+    from gplearn.genetic import SymbolicRegressor
+    from sklearn.utils.validation import check_X_y
+    from types import MethodType
+
+    def protected_exp(x):
+        return np.exp(np.clip(x, -20.0, 20.0))
+
+    function_set: list[Any] = [
+        "add", "sub", "mul", "div", "sin", "cos", "log", "abs",
+        make_function(function=np.tanh, name="tanh", arity=1, wrap=False),
+        make_function(function=np.sign, name="sign", arity=1, wrap=False),
+        make_function(function=protected_exp, name="exp", arity=1, wrap=False),
+    ]
+    model = SymbolicRegressor(
+        population_size=1000,
+        generations=1,
+        tournament_size=20,
+        stopping_criteria=0.0,
+        const_range=(-5.0, 5.0),
+        init_depth=(2, 6),
+        init_method="half and half",
+        function_set=function_set,
+        metric="mse",
+        parsimony_coefficient=0.001,
+        p_crossover=0.7,
+        p_subtree_mutation=0.1,
+        p_hoist_mutation=0.05,
+        p_point_mutation=0.1,
+        max_samples=1.0,
+        warm_start=True,
+        low_memory=False,
+        n_jobs=1,
+        verbose=0,
+        random_state=seed,
+    )
+    if not hasattr(model, "_validate_data"):
+        # gplearn 0.4.2 predates sklearn 1.7, where BaseEstimator's private
+        # helper was removed. Keep the compatibility shim local to this
+        # instance and preserve the validation semantics gplearn expects.
+        def compat_validate_data(self, x, y, y_numeric=True):
+            checked_x, checked_y = check_X_y(x, y, y_numeric=y_numeric)
+            self.n_features_in_ = checked_x.shape[1]
+            return checked_x, checked_y
+
+        model._validate_data = MethodType(compat_validate_data, model)
+    x_train = train[features].to_numpy(dtype=float)
+    y_train = train["y"].to_numpy(dtype=float)
+    started = time.time()
+    generation = 0
+    expressions: list[str] = []
+    native: list[dict[str, Any]] = []
+    while generation == 0 or time.time() - started < float(budget_sec):
+        generation += 1
+        model.set_params(generations=generation)
+        generation_started = time.time()
+        model.fit(x_train, y_train)
+        programs = [program for program in (getattr(model, "_best_programs", None) or []) if program]
+        best_program = getattr(model, "_program", None)
+        if best_program is not None:
+            programs.append(best_program)
+        populations = getattr(model, "_programs", None) or []
+        if populations:
+            population = [program for program in populations[-1] if program is not None]
+            population.sort(key=lambda program: float(program.raw_fitness_))
+            programs.extend(population[:50])
+        for program in programs:
+            expression = canonicalize_gplearn(str(program), features)
+            expressions.append(expression)
+            native.append({"native_fitness": float(program.raw_fitness_), "generation": generation})
+        generation_sec = time.time() - generation_started
+        remaining = float(budget_sec) - (time.time() - started)
+        if remaining <= max(0.25, generation_sec * 1.1):
+            break
+    runtime = time.time() - started
+    selected, scored = score_candidates(expressions, val, features, eta, native)
+    return {
+        "method": "gplearn",
+        "best_expr": selected["expression"] if selected else None,
+        "runtime_sec": runtime,
+        "candidate_count": len(expressions),
+        "valid_candidate_count": len(scored),
+        "pareto_candidates": scored,
+        "allowed_operators": ["+", "-", "*", "/", "sin", "cos", "log", "abs", "tanh", "sign", "exp"],
+        "baseline_source": "gplearn 0.4.2 SymbolicRegressor",
+        "baseline_hyperparameters": {
+            "population_size": 1000,
+            "completed_generations": generation,
+            "parsimony_coefficient": 0.001,
+            "time_budget_seconds": float(budget_sec),
+        },
+    }
+
+
+def run_linear_ls(
+    train: pd.DataFrame,
+    val: pd.DataFrame,
+    features: list[str],
+    eta: float,
+) -> dict[str, Any]:
+    """Ordinary linear model as a deterministic lower-bound ablation."""
+    started = time.time()
+    columns = [(name, train[name].to_numpy(dtype=float)) for name in features]
+    expression = fitted_linear_expression(columns, train["y"].to_numpy(dtype=float))
+    selected, scored = score_candidates([expression], val, features, eta)
+    return {
+        "method": "linear_ls",
+        "best_expr": selected["expression"] if selected else None,
+        "runtime_sec": time.time() - started,
+        "candidate_count": 1,
+        "valid_candidate_count": len(scored),
+        "pareto_candidates": scored,
+        "allowed_operators": ["+", "*"],
+        "baseline_source": "ordinary least squares sanity baseline",
+        "baseline_hyperparameters": {"coefficient_fitter": "numpy.linalg.lstsq"},
+    }
+
+
 def fitted_linear_expression(columns: list[tuple[str, np.ndarray]], y: np.ndarray) -> str:
     matrix = np.column_stack([values for _, values in columns] + [np.ones(len(y))])
     coefficients, *_ = np.linalg.lstsq(matrix, y, rcond=None)
@@ -358,6 +509,10 @@ def main() -> int:
             method_result = run_pysr(args.dataset, args.seed, budget_sec, train, val, features, eta)
         elif args.method == "operon":
             method_result = run_operon(args.dataset, args.seed, budget_sec, train, val, features, eta)
+        elif args.method == "gplearn":
+            method_result = run_gplearn(args.dataset, args.seed, budget_sec, train, val, features, eta)
+        elif args.method == "linear_ls":
+            method_result = run_linear_ls(train, val, features, eta)
         else:
             method_result = run_physics_ls(args.dataset, train, val, features, eta)
         result.update(method_result)

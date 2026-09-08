@@ -24,6 +24,10 @@ EXPECTED = {
     ("pysr", "roughpipe"): 20,
     ("operon", "emps"): 20,
     ("operon", "roughpipe"): 20,
+    ("gplearn", "emps"): 20,
+    ("gplearn", "roughpipe"): 20,
+    ("linear_ls", "emps"): 1,
+    ("linear_ls", "roughpipe"): 1,
     ("physics_ls", "emps"): 1,
 }
 METHOD_NAMES = {
@@ -31,6 +35,8 @@ METHOD_NAMES = {
     "vega_sr": "PSE-aligned VEGA-SR",
     "pysr": "PySR",
     "operon": "Operon",
+    "gplearn": "gplearn",
+    "linear_ls": "Linear-LS",
     "physics_ls": "Physics-LS (ablation)",
 }
 DATASET_NAMES = {"emps": "EMPS", "roughpipe": "Roughpipe"}
@@ -98,7 +104,7 @@ def main() -> int:
     if incomplete and not args.allow_incomplete:
         raise RuntimeError(f"formal experiment is incomplete: {incomplete}")
 
-    order = ["pse", "pysr", "operon", "vega_sr", "physics_ls"]
+    order = ["linear_ls", "pse", "pysr", "operon", "gplearn", "vega_sr", "physics_ls"]
     result_rows = []
     summary: dict[tuple[str, str], dict[str, float]] = {}
     for dataset in ("emps", "roughpipe"):

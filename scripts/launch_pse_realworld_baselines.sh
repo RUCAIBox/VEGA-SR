@@ -3,7 +3,7 @@ set -euo pipefail
 
 ROOT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
 CONFIG_PATH="${CONFIG_PATH:-${ROOT_DIR}/pse_realworld_vega_sr.yaml}"
-METHOD="${METHOD:?set METHOD to pysr, operon, or physics_ls}"
+METHOD="${METHOD:?set METHOD to pysr, operon, gplearn, linear_ls, or physics_ls}"
 DATASET="${DATASET:?set DATASET to emps or roughpipe}"
 PYTHON_BIN="${PYTHON_BIN:?set PYTHON_BIN to the baseline environment python}"
 RESULTS_DIR="${RESULTS_DIR:-${ROOT_DIR}/results/pse_realworld_baselines}"

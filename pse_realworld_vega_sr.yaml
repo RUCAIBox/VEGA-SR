@@ -119,10 +119,10 @@ execution:
   baselines:
     # PySR and Operon are the two low-friction, directly comparable baselines
     # from the PSE real-world tables. Candidate selection is validation-only.
-    primary: [pysr, operon]
+    primary: [pysr, operon, gplearn]
     # EMPS-only check separating the value of the supplied physical prior from
     # the value of VEGA-SR's symbolic-search pipeline.
-    ablations: [physics_ls]
+    ablations: [linear_ls, physics_ls]
     selection_metric: validation_reward_eta_0.99
     pysr:
       released_emps_niterations: 100
@@ -147,6 +147,11 @@ execution:
       pool_size: 1000
       n_threads: 4
       max_time_seconds: 90
+    gplearn:
+      population_size: 1000
+      tournament_size: 20
+      parsimony_coefficient: 0.001
+      time_budget_seconds: 90
 
 datasets:
   emps:
