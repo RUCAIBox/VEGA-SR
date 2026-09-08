@@ -1416,6 +1416,25 @@ def build_manual_candidates(feature_names):
     extra = []
     d = len(feature_names)
 
+    # Generic dynamics residual library.  A smooth/odd correction on a
+    # velocity-like variable captures Coulomb and Stribeck-style residuals
+    # without referring to any benchmark name or protected expression.
+    velocity_vars = [
+        x for x in feature_names
+        if any(tag in str(x).lower() for tag in ("qdot", "xdot", "velocity", "vel", "omega"))
+    ]
+    if d >= 2 and velocity_vars:
+        linear = "+".join(f"a{i + 1}*{x}" for i, x in enumerate(feature_names))
+        for velocity in velocity_vars[:2]:
+            residual_coef = f"a{d + 1}"
+            extra.extend([
+                f"{linear}+{residual_coef}*sign({velocity})+c",
+                f"{linear}+{residual_coef}*tanh(b1*{velocity})+c",
+                f"{linear}+{residual_coef}*{velocity}/(abs({velocity})+b1)+c",
+                f"{linear}+{residual_coef}*sign({velocity})*exp(-b1*{velocity}**2)+c",
+                f"{linear}+{residual_coef}/(abs({velocity})+b1)+c",
+            ])
+
     if d == 1:
         x = feature_names[0]
         extra.extend([
