@@ -3,7 +3,7 @@ set -euo pipefail
 
 ROOT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
 CONFIG_PATH="${CONFIG_PATH:-${ROOT_DIR}/pse_realworld_vega_sr.yaml}"
-METHOD="${METHOD:?set METHOD to pysr, operon, gplearn, linear_ls, or physics_ls}"
+METHOD="${METHOD:?set METHOD to pysr, operon, gplearn, dso, llm_sr, linear_ls, or physics_ls}"
 DATASET="${DATASET:?set DATASET to emps or roughpipe}"
 PYTHON_BIN="${PYTHON_BIN:?set PYTHON_BIN to the baseline environment python}"
 RESULTS_DIR="${RESULTS_DIR:-${ROOT_DIR}/results/pse_realworld_baselines}"
@@ -25,6 +25,21 @@ if [[ "${METHOD}" == "pysr" ]]; then
   export OPENBLAS_NUM_THREADS="${PYSR_BLAS_THREADS:-1}"
   export OMP_NUM_THREADS="${PYSR_OMP_THREADS:-1}"
   export MKL_NUM_THREADS="${PYSR_MKL_THREADS:-1}"
+fi
+
+if [[ "${METHOD}" == "dso" ]]; then
+  export DSO_ROOT="${DSO_ROOT:-/home/liuyihong/deep-symbolic-optimization/dso}"
+  export PYTHONPATH="${DSO_ROOT}${PYTHONPATH:+:${PYTHONPATH}}"
+  # DSO/TensorFlow 1.x is CPU-only in the reproducibility environment.
+  export CUDA_VISIBLE_DEVICES=""
+fi
+
+if [[ "${METHOD}" == "llm_sr" ]]; then
+  export OFFICIAL_LLMSR_ROOT="${OFFICIAL_LLMSR_ROOT:-/home/liuyihong/LLM-SR}"
+  export OFFICIAL_LLMSR_API_BASE="${OFFICIAL_LLMSR_API_BASE:-http://127.0.0.1:18080/v1}"
+  export OFFICIAL_LLMSR_API_KEY="${OFFICIAL_LLMSR_API_KEY:-EMPTY}"
+  export OFFICIAL_LLMSR_MODEL="${OFFICIAL_LLMSR_MODEL:-llm-baseline-qwen2.5-32b}"
+  export PYTHONPATH="${OFFICIAL_LLMSR_ROOT}${PYTHONPATH:+:${PYTHONPATH}}"
 fi
 
 CASE_DIR="${RESULTS_DIR}/cases/${METHOD}/${DATASET}"

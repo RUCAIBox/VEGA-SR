@@ -1,4 +1,12 @@
 method,dataset,status,count
+dso,emps,ok,20
+dso,roughpipe,ok,20
+gplearn,emps,ok,20
+gplearn,roughpipe,ok,20
+linear_ls,emps,ok,1
+linear_ls,roughpipe,ok,1
+llm_sr,emps,ok,20
+llm_sr,roughpipe,ok,20
 operon,emps,ok,20
 operon,roughpipe,ok,20
 physics_ls,emps,ok,1

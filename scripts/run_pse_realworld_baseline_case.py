@@ -5,15 +5,19 @@ PySR and Operon follow the operator libraries and 90-second settings released
 with PSE, but candidates are selected on our validation split rather than on
 the final test split. ``physics_ls`` is an EMPS-only prior ablation: it fits the
 same Newton/friction templates supplied to VEGA-SR without doing symbolic
-search.
+search. DSO reuses the same official adapter and released hyperparameter family
+used by the paper's 895-task comparison.
 """
 
 from __future__ import annotations
 
 import argparse
+import importlib.util
 import json
 import math
+import os
 import random
+import re
 import sys
 import time
 from pathlib import Path
@@ -45,7 +49,7 @@ def parse_args() -> argparse.Namespace:
     parser.add_argument(
         "--method",
         required=True,
-        choices=("pysr", "operon", "gplearn", "linear_ls", "physics_ls"),
+        choices=("pysr", "operon", "gplearn", "dso", "llm_sr", "linear_ls", "physics_ls"),
     )
     parser.add_argument("--dataset", required=True, choices=("emps", "roughpipe"))
     parser.add_argument("--seed", required=True, type=int)
@@ -407,6 +411,335 @@ def run_gplearn(
     }
 
 
+def canonicalize_dso(expression: str, features: list[str]) -> str:
+    """Map DSO's one-based x1..xN symbols to the dataset feature names."""
+    def replace(match: re.Match[str]) -> str:
+        index = int(match.group(1)) - 1
+        return features[index] if 0 <= index < len(features) else match.group(0)
+
+    return re.sub(r"\bx(\d+)\b", replace, str(expression))
+
+
+def run_dso(
+    seed: int,
+    budget_sec: float,
+    train: pd.DataFrame,
+    val: pd.DataFrame,
+    test: pd.DataFrame,
+    features: list[str],
+) -> dict[str, Any]:
+    """Run the paper's DSO adapter while preserving protected-op predictions."""
+    dso_root = Path(
+        os.environ.get(
+            "DSO_ROOT",
+            "/home/liuyihong/deep-symbolic-optimization/dso",
+        )
+    ).resolve()
+    if not (dso_root / "dso" / "__init__.py").is_file():
+        raise FileNotFoundError(f"DSO source tree not found: {dso_root}")
+    if str(dso_root) not in sys.path:
+        sys.path.insert(0, str(dso_root))
+    import run_cpu_baseline_benchmarks as cpu_baselines
+
+    source_config = ROOT / "evaluation_suites" / "cpu_symbolic_regression_fourbench" / "configs" / "dso_100s.yaml"
+    dso_config = yaml.safe_load(source_config.read_text(encoding="utf-8"))
+    dso_config.setdefault("runtime", {})["max_fit_seconds"] = float(budget_sec)
+    with TemporaryDirectory(prefix=f"pse_baseline_dso_{seed}_") as temporary_dir:
+        runtime_config = Path(temporary_dir) / "dso_realworld.yaml"
+        runtime_config.write_text(yaml.safe_dump(dso_config, sort_keys=False), encoding="utf-8")
+        native = cpu_baselines.fit_dso(
+            train,
+            val,
+            test,
+            config_path=runtime_config,
+            random_state=seed,
+        )
+
+    expression = canonicalize_dso(native.get("best_expr"), features)
+    split_metrics = {
+        "train_mse": native.get("best_train_mse"),
+        "val_mse": native.get("best_val_mse"),
+        "test_mse": native.get("best_test_mse"),
+        "train_r2": native.get("train_r2"),
+        "val_r2": native.get("val_r2"),
+        "test_r2": native.get("test_r2"),
+    }
+    for split_name, frame in (("train", train), ("val", val), ("test", test)):
+        mse = split_metrics.get(f"{split_name}_mse")
+        variance = float(np.var(frame["y"].to_numpy(dtype=float)))
+        split_metrics[f"{split_name}_nmse"] = (
+            float(mse) / variance
+            if mse is not None and math.isfinite(float(mse)) and variance > 0
+            else None
+        )
+    return {
+        "method": "dso",
+        "best_expr": expression,
+        "runtime_sec": native.get("fit_runtime_sec"),
+        "candidate_count": native.get("num_candidate_exprs"),
+        "valid_candidate_count": native.get("validation_search_unique_evaluations"),
+        "allowed_operators": ["+", "-", "*", "/", "sin", "cos", "exp", "log"],
+        "baseline_source": "DSO configuration used by the VEGA-SR 895-task comparison",
+        "baseline_hyperparameters": {
+            "source_config": str(source_config),
+            "source_revision": "8348d5b08d1eef6170fdbfd222a492ded990ea12",
+            "time_budget_seconds": float(budget_sec),
+            "protected_operators": True,
+            "n_samples": dso_config.get("dso", {}).get("training", {}).get("n_samples"),
+            "batch_size": dso_config.get("dso", {}).get("training", {}).get("batch_size"),
+        },
+        "native_validation_selection": True,
+        "native_metrics": native,
+        "_precomputed_split_metrics": split_metrics,
+    }
+
+
+def physical_llmsr_expression(
+    expression: str | None,
+    parameters: np.ndarray,
+    features: list[str],
+    normalization: dict[str, Any],
+) -> str | None:
+    """Convert an LLM-SR normalized expression back to physical variables."""
+    if not expression:
+        return None
+    substituted = str(expression)
+    for index, value in enumerate(parameters):
+        substituted = re.sub(
+            rf"\bparams\s*\[\s*{index}\s*\]",
+            f"({float(value):.17g})",
+            substituted,
+        )
+    substituted = substituted.replace("np.", "").replace("numpy.", "")
+    locals_map: dict[str, Any] = {
+        "abs": sympy.Abs,
+        "Abs": sympy.Abs,
+        "sign": sympy.sign,
+        "minimum": sympy.Min,
+        "maximum": sympy.Max,
+    }
+    x_symbols = [sympy.Symbol(f"x{i}") for i in range(len(features))]
+    locals_map.update({str(symbol): symbol for symbol in x_symbols})
+    parsed = sympy.sympify(substituted, locals=locals_map)
+    replacements = {
+        symbol: (sympy.Symbol(feature) - float(normalization["x_mu"][index]))
+        / float(normalization["x_scale"][index])
+        for index, (symbol, feature) in enumerate(zip(x_symbols, features))
+    }
+    physical = float(normalization["y_mu"]) + float(normalization["y_scale"]) * parsed.xreplace(replacements)
+    return str(physical)
+
+
+def run_llm_sr(
+    dataset: str,
+    seed: int,
+    budget_sec: float,
+    train: pd.DataFrame,
+    val: pd.DataFrame,
+    test: pd.DataFrame,
+    features: list[str],
+    eta: float,
+) -> dict[str, Any]:
+    """Run the official LLM-SR search and select candidates on validation."""
+    official_root = Path(os.environ.get("OFFICIAL_LLMSR_ROOT", "/home/liuyihong/LLM-SR")).resolve()
+    adapter_path = ROOT / "evaluation_suites" / "official_llmsr_fourbench" / "run_official_llmsr_fourbench.py"
+    if not (official_root / "llmsr").is_dir():
+        raise FileNotFoundError(f"official LLM-SR source tree not found: {official_root}")
+    os.environ["OFFICIAL_LLMSR_ROOT"] = str(official_root)
+    if str(official_root) not in sys.path:
+        sys.path.insert(0, str(official_root))
+    module_spec = importlib.util.spec_from_file_location("pse_realworld_official_llmsr", adapter_path)
+    if module_spec is None or module_spec.loader is None:
+        raise ImportError(f"cannot load LLM-SR adapter: {adapter_path}")
+    adapter = importlib.util.module_from_spec(module_spec)
+    module_spec.loader.exec_module(adapter)
+
+    normalized_train, normalized_val, normalized_test, normalization = adapter.normalize_splits(train, val, test)
+    specification = adapter.make_case_spec(
+        "realworld",
+        {"case_name": dataset},
+        normalized_train,
+        max_params=10,
+    )
+    x_train = normalized_train[features].to_numpy(dtype=float)
+    y_train = normalized_train["y"].to_numpy(dtype=float)
+    inputs = {"data": {"inputs": x_train, "outputs": y_train}}
+    class DeadlineVLLMChatLLM(adapter.OfficialVLLMChatLLM):
+        """Official API sampler with deterministic seeds and a call-boundary deadline."""
+
+        deadline = math.inf
+        repeat_seed = int(seed)
+        request_index = 0
+
+        def __init__(self, samples_per_prompt: int) -> None:
+            adapter.official_sampler.LLM.__init__(self, samples_per_prompt)
+            from openai import OpenAI
+
+            self._client = OpenAI(base_url=self.api_base, api_key=self.api_key, max_retries=0)
+
+        @staticmethod
+        def clean_body(text: str, config: Any) -> str:
+            text = str(text or "").strip()
+            fenced = re.search(r"```(?:python)?\s*(.*?)```", text, flags=re.IGNORECASE | re.DOTALL)
+            if fenced:
+                text = fenced.group(1).strip()
+            body = adapter.official_sampler._extract_body(text, config)
+            if re.search(r"^\s*def\s+", text, flags=re.MULTILINE):
+                return body
+            lines = body.splitlines()
+            first_return = next((i for i, line in enumerate(lines) if line.lstrip().startswith("return ")), None)
+            if first_return is not None:
+                lines = lines[first_return:]
+            return "\n".join(line if line.startswith("    ") else "    " + line for line in lines if line.strip()) + "\n"
+
+        def draw_samples(self, prompt: str, config: Any) -> list[str]:
+            system = (
+                "You are running the official LLM-SR algorithm. Complete only the Python body "
+                "of the equation function. Use numpy operations, provided variables, and params "
+                "for constants. Start directly with return and do not use Markdown fences."
+            )
+            user_prompt = "Complete the function below with only its Python body.\n" + prompt
+            samples: list[str] = []
+            for _ in range(self._samples_per_prompt):
+                remaining = self.deadline - time.time()
+                if remaining <= 0:
+                    raise TimeoutError(f"LLM-SR search exceeded {budget_sec:.1f} seconds")
+                request_seed = self.repeat_seed * 100000 + self.request_index
+                self.request_index += 1
+                response = self._client.chat.completions.create(
+                    model=self.model,
+                    messages=[
+                        {"role": "system", "content": system},
+                        {"role": "user", "content": user_prompt},
+                    ],
+                    temperature=self.temperature,
+                    max_tokens=self.max_tokens,
+                    seed=request_seed,
+                    timeout=max(1.0, min(self.request_timeout_sec, remaining)),
+                )
+                samples.append(self.clean_body(response.choices[0].message.content or "", config))
+            return samples
+
+    DeadlineVLLMChatLLM.api_base = os.environ.get("OFFICIAL_LLMSR_API_BASE", "http://127.0.0.1:18080/v1")
+    DeadlineVLLMChatLLM.api_key = os.environ.get("OFFICIAL_LLMSR_API_KEY", "EMPTY")
+    DeadlineVLLMChatLLM.model = os.environ.get("OFFICIAL_LLMSR_MODEL", "llm-baseline-qwen2.5-32b")
+    DeadlineVLLMChatLLM.temperature = float(os.environ.get("OFFICIAL_LLMSR_TEMPERATURE", "0.8"))
+    DeadlineVLLMChatLLM.max_tokens = int(os.environ.get("OFFICIAL_LLMSR_MAX_TOKENS", "512"))
+    DeadlineVLLMChatLLM.request_timeout_sec = min(float(budget_sec), 60.0)
+    llmsr_config = adapter.official_config.Config(
+        num_samplers=1,
+        num_evaluators=1,
+        samples_per_prompt=int(os.environ.get("OFFICIAL_LLMSR_SAMPLES_PER_PROMPT", "4")),
+        evaluate_timeout_seconds=min(20, max(2, int(budget_sec // 4))),
+        use_api=False,
+    )
+    class_config = adapter.official_config.ClassConfig(
+        llm_class=DeadlineVLLMChatLLM,
+        sandbox_class=adapter.official_evaluator.LocalSandbox,
+    )
+
+    timed_out = False
+    started = time.time()
+    DeadlineVLLMChatLLM.deadline = started + float(budget_sec)
+    with TemporaryDirectory(prefix=f"pse_realworld_llmsr_{dataset}_{seed}_") as temporary_dir:
+        log_dir = Path(temporary_dir) / "official_log"
+        try:
+            adapter.official_pipeline.main(
+                specification=specification,
+                inputs=inputs,
+                config=llmsr_config,
+                max_sample_nums=100000,
+                class_config=class_config,
+                log_dir=str(log_dir),
+            )
+        except TimeoutError:
+            timed_out = True
+        except Exception as exc:
+            if time.time() >= DeadlineVLLMChatLLM.deadline or type(exc).__name__ in {
+                "APITimeoutError",
+                "ReadTimeout",
+            }:
+                timed_out = True
+            else:
+                raise
+
+        samples = adapter.load_samples_in_generation_order(log_dir / "samples")
+        scored: list[dict[str, Any]] = []
+        for sample in samples:
+            try:
+                predictions = adapter.fit_predict(
+                    sample["function"],
+                    normalized_train,
+                    normalized_val,
+                    normalized_test,
+                    train,
+                    val,
+                    test,
+                    normalization,
+                    max_params=10,
+                )
+                val_mse = float(np.mean((predictions["y_val"] - predictions["pred_val"]) ** 2))
+                raw_expression = adapter.extract_return_expression(sample["function"])
+                expression = physical_llmsr_expression(
+                    raw_expression,
+                    predictions["optimized_params"],
+                    features,
+                    normalization,
+                )
+                complexity = expression_complexity(expression, features).get("expr_complexity")
+                if complexity is None or not math.isfinite(val_mse):
+                    continue
+                scored.append({
+                    "expression": expression,
+                    "official_function": sample["function"],
+                    "validation_mse": val_mse,
+                    "expression_complexity": int(complexity),
+                    "validation_reward": float(eta ** int(complexity) / (1.0 + math.sqrt(max(0.0, val_mse)))),
+                    "sample_order": sample.get("sample_order"),
+                    "official_score": sample.get("official_score"),
+                })
+            except Exception as exc:
+                scored.append({
+                    "expression": adapter.extract_return_expression(sample.get("function", "")),
+                    "official_function": sample.get("function"),
+                    "status": "invalid",
+                    "error": repr(exc),
+                    "sample_order": sample.get("sample_order"),
+                })
+
+    valid_scored = [candidate for candidate in scored if candidate.get("validation_reward") is not None]
+    valid_scored.sort(key=lambda item: (-item["validation_reward"], item["expression_complexity"], item["validation_mse"]))
+    selected = valid_scored[0] if valid_scored else None
+    if selected is None:
+        raise RuntimeError(f"LLM-SR produced no valid candidate from {len(samples)} samples")
+    return {
+        "method": "llm_sr",
+        "best_expr": selected["expression"],
+        "runtime_sec": time.time() - started,
+        "candidate_count": len(samples),
+        "valid_candidate_count": len(valid_scored),
+        "pareto_candidates": scored,
+        "allowed_operators": "model-generated NumPy expressions",
+        "baseline_source": "official LLM-SR adapter used by the VEGA-SR 895-task comparison",
+        "baseline_hyperparameters": {
+            "official_root": str(official_root),
+            "official_revision": "41c212312df6c16d936c9cb395356a62774c47e3",
+            "model": DeadlineVLLMChatLLM.model,
+            "samples_per_prompt": llmsr_config.samples_per_prompt,
+            "temperature": DeadlineVLLMChatLLM.temperature,
+            "max_tokens": DeadlineVLLMChatLLM.max_tokens,
+            "request_seed_rule": "repeat_seed*100000 + request_index",
+            "time_budget_seconds": float(budget_sec),
+        },
+        "generated_specification": specification,
+        "normalization": {
+            "x_mu": normalization["x_mu"].tolist(),
+            "x_scale": normalization["x_scale"].tolist(),
+            "y_mu": float(normalization["y_mu"]),
+            "y_scale": float(normalization["y_scale"]),
+        },
+        "search_timed_out_at_budget": timed_out,
+    }
 def run_linear_ls(
     train: pd.DataFrame,
     val: pd.DataFrame,
@@ -511,6 +844,10 @@ def main() -> int:
             method_result = run_operon(args.dataset, args.seed, budget_sec, train, val, features, eta)
         elif args.method == "gplearn":
             method_result = run_gplearn(args.dataset, args.seed, budget_sec, train, val, features, eta)
+        elif args.method == "dso":
+            method_result = run_dso(args.seed, budget_sec, train, val, test, features)
+        elif args.method == "llm_sr":
+            method_result = run_llm_sr(args.dataset, args.seed, budget_sec, train, val, test, features, eta)
         elif args.method == "linear_ls":
             method_result = run_linear_ls(train, val, features, eta)
         else:
@@ -518,9 +855,13 @@ def main() -> int:
         result.update(method_result)
         expression = result.get("best_expr")
         result.update(expression_complexity(expression, features))
-        for split_name, frame in (("train", train), ("val", val), ("test", test)):
-            for metric_name, value in metrics_for_expression(expression, frame, features).items():
-                result[f"{split_name}_{metric_name}"] = value
+        precomputed = result.pop("_precomputed_split_metrics", None)
+        if precomputed is not None:
+            result.update(precomputed)
+        else:
+            for split_name, frame in (("train", train), ("val", val), ("test", test)):
+                for metric_name, value in metrics_for_expression(expression, frame, features).items():
+                    result[f"{split_name}_{metric_name}"] = value
         if args.dataset == "emps":
             result["pse_discovery_half_mse"] = metrics_for_expression(expression, alignment, features)["mse"]
         else:

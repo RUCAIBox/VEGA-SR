@@ -119,7 +119,7 @@ execution:
   baselines:
     # PySR and Operon are the two low-friction, directly comparable baselines
     # from the PSE real-world tables. Candidate selection is validation-only.
-    primary: [pysr, operon, gplearn]
+    primary: [pysr, operon, gplearn, dso, llm_sr]
     # EMPS-only check separating the value of the supplied physical prior from
     # the value of VEGA-SR's symbolic-search pipeline.
     ablations: [linear_ls, physics_ls]
@@ -152,6 +152,25 @@ execution:
       tournament_size: 20
       parsimony_coefficient: 0.001
       time_budget_seconds: 90
+    dso:
+      source_config: evaluation_suites/cpu_symbolic_regression_fourbench/configs/dso_100s.yaml
+      source_revision: 8348d5b08d1eef6170fdbfd222a492ded990ea12
+      protected_operators: true
+      time_budget_seconds: 90
+      cpu_cores_per_case: 1
+    llm_sr:
+      implementation: official LLM-SR adapter used by the 895-task comparison
+      source_revision: 41c212312df6c16d936c9cb395356a62774c47e3
+      model: Qwen2.5-32B-Instruct
+      served_model_name: llm-baseline-qwen2.5-32b
+      tensor_parallel_size: 2
+      samples_per_prompt: 4
+      temperature: 0.8
+      max_tokens: 512
+      request_seed_rule: repeat_seed*100000 + request_index
+      selection_split: validation
+      time_budget_seconds: 90
+      repeats: 20
 
 datasets:
   emps:

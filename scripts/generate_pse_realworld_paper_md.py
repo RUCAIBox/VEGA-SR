@@ -26,6 +26,10 @@ EXPECTED = {
     ("operon", "roughpipe"): 20,
     ("gplearn", "emps"): 20,
     ("gplearn", "roughpipe"): 20,
+    ("dso", "emps"): 20,
+    ("dso", "roughpipe"): 20,
+    ("llm_sr", "emps"): 20,
+    ("llm_sr", "roughpipe"): 20,
     ("linear_ls", "emps"): 1,
     ("linear_ls", "roughpipe"): 1,
     ("physics_ls", "emps"): 1,
@@ -36,6 +40,8 @@ METHOD_NAMES = {
     "pysr": "PySR",
     "operon": "Operon",
     "gplearn": "gplearn",
+    "dso": "DSO",
+    "llm_sr": "LLM-SR",
     "linear_ls": "Linear-LS",
     "physics_ls": "Physics-LS (ablation)",
 }
@@ -104,7 +110,7 @@ def main() -> int:
     if incomplete and not args.allow_incomplete:
         raise RuntimeError(f"formal experiment is incomplete: {incomplete}")
 
-    order = ["linear_ls", "pse", "pysr", "operon", "gplearn", "vega_sr", "physics_ls"]
+    order = ["linear_ls", "pse", "pysr", "operon", "gplearn", "dso", "llm_sr", "vega_sr", "physics_ls"]
     result_rows = []
     summary: dict[tuple[str, str], dict[str, float]] = {}
     for dataset in ("emps", "roughpipe"):
@@ -133,7 +139,7 @@ def main() -> int:
     relative_rows = []
     for dataset in ("emps", "roughpipe"):
         pse = summary[("pse", dataset)]
-        for method in ("pysr", "operon", "vega_sr"):
+        for method in ("pysr", "operon", "gplearn", "dso", "llm_sr", "vega_sr"):
             if (method, dataset) not in summary:
                 continue
             current = summary[(method, dataset)]
@@ -179,13 +185,13 @@ Status: {status_note}
 
 ## 1. Experiment scope
 
-This experiment compares PSE, PSE-aligned VEGA-SR, PySR, and Operon on two real-world symbolic-regression tasks from the PSE study. Physics-LS is reported separately as an EMPS prior-only ablation rather than as a general symbolic-regression baseline. The goal is to compare predictive accuracy, symbolic complexity, and descriptive runtime under a common data split and a validation-only expression-selection protocol.
+This experiment compares PSE-aligned VEGA-SR with PSE, PySR, Operon, gplearn, DSO, and LLM-SR on two real-world symbolic-regression tasks from the PSE study. DSO and LLM-SR are carried over from the paper's 895-task comparator set and rerun here on the measured systems; no result is transferred across datasets. Physics-LS is reported separately as an EMPS prior-only ablation rather than as a general symbolic-regression baseline. The goal is to compare predictive accuracy, symbolic complexity, and descriptive runtime under a common data split and a validation-only expression-selection protocol.
 
 ## 2. Reproducible protocol
 
-- Repeats: 20 seeds (`0`–`19`) for PSE, VEGA-SR, PySR, and Operon. Physics-LS is deterministic and is run once.
-- Search budget: 90 seconds per formal case. Runtime includes method initialization and search inside each case, but excludes one-time VEGA model-service startup.
-- Selection: candidates are ranked using validation data with $0.99^C/(1+\\sqrt{{\\mathrm{{MSE}}_{{val}}}})$, where $C$ is the common SymPy-tree complexity; test metrics are not part of that ranking score. The current VEGA-SR fitter nevertheless evaluates candidate predictions on the test inputs while constructing fit records and may reject a numerically invalid expression, so this implementation does not satisfy the stronger claim that the test split remains completely unaccessed during search.
+- Repeats: 20 runs (`0`–`19`) for every search method. Linear-LS and Physics-LS are deterministic and are run once per applicable dataset.
+- Search budget: the nominal search deadline is 90 seconds per formal case, with method-specific enforcement granularity. PSE, PySR, Operon, gplearn and LLM-SR stop at their next safe stage, iteration, generation or request boundary; DSO retains the paper configuration's fixed 5,000-sample work budget with a best-effort 90-second alarm. Actual runtime is always reported, and one-time VEGA-SR and LLM-SR model-service startup is excluded.
+- Selection: methods exposing candidate sets are ranked using validation data with $0.99^C/(1+\\sqrt{{\\mathrm{{MSE}}_{{val}}}})$, where $C$ is the common SymPy-tree complexity. DSO retains its native risk-seeking objective and stopping rule, consistent with the baseline protocol used elsewhere in the paper. Test metrics are not part of any ranking score. The current VEGA-SR fitter nevertheless evaluates candidate predictions on the test inputs while constructing fit records and may reject a numerically invalid expression, so this implementation does not satisfy the stronger claim that the test split remains completely unaccessed during search.
 - Primary metrics: test MSE, NMSE, $R^2$, expression complexity, and descriptive runtime.
 - Data and source pinning: PSE commit `{config['provenance']['pse_commit']}` and VEGA-SR reference commit `{config['provenance']['vega_sr_reference_commit']}`. Raw files are verified by the SHA-256 hashes in the YAML configuration.
 
@@ -202,13 +208,16 @@ This experiment compares PSE, PSE-aligned VEGA-SR, PySR, and Operon on two real-
 - **PSE-aligned VEGA-SR:** planner-guided full pipeline, three planner/refinement rounds, restored text proposer, 90-second deadline, and validation-only selection. For EMPS it receives the published Newton/friction prior $M\\ddot q=-F_v\\dot q-F_c\\operatorname{{sign}}(\\dot q)+\\tau-c$ through three protected templates.
 - **PySR:** PSE-released operator libraries; deterministic serial execution pinned to one CPU core with one Julia/BLAS thread and a 90-second timeout. The released maximum search work is preserved as 100 × 380 mutation cycles for EMPS and 50 × 380 for Roughpipe. For PySR 1.5, each cycle is made an interruptible iteration (`ncycles_per_iteration=1`, effective iteration caps 38,000 and 19,000) so that pathological seeds cannot overrun the same wall-clock deadline by several minutes. Explicit one-thread environment limits and CPU affinity implement the released script's disabled-multithreading intent on this host.
 - **Operon:** PSE-released operators; objectives `(mse, length)`; population and pool size 1,000; four CPU threads; Levenberg–Marquardt local optimization; 90-second maximum time.
+- **gplearn:** genetic programming with population size 1,000, tournament size 20, parsimony coefficient 0.001, one CPU thread, and a 90-second target checked between generations. Because a generation is atomic, one Roughpipe seed required 163.75 seconds of search time; no test-based fallback or reselection was performed.
+- **DSO:** the official deep-symbolic-optimization implementation and the configuration used in the paper's 895-task comparison; protected operators, risk-seeking policy-gradient search, one CPU thread and 5,000 sampled expressions. A best-effort 90-second alarm bounds the search, but TensorFlow's atomic calls can delay signal delivery; the maximum observed fit runtime was 130.51 seconds. DSO retains its native final-program selection.
+- **LLM-SR:** the official LLM-SR evolutionary pipeline used in the paper's 895-task comparison, driven by Qwen2.5-32B-Instruct. Candidate constants are fitted on training data and final candidates are ranked on validation data under the common score. Generation stops at the first API request boundary after 90 seconds; post-search candidate refitting and summary construction account for total runtimes above 90 seconds.
 - **Physics-LS:** the same three EMPS physical templates supplied to VEGA-SR, with coefficients fitted by ordinary least squares. It performs no symbolic structure search.
 
-EMPS operators are `+`, `-`, `*`, `/`, `sin`, `cos`, `exp`, `log`, `cosh`, `tanh`, `abs`, and `sign`. Roughpipe uses `+`, `-`, `*`, `/`, `sin`, `cos`, `exp`, `log`, `cosh`, `tanh`, square, and cube.
+For the PSE-aligned operator-library comparisons, EMPS operators are `+`, `-`, `*`, `/`, `sin`, `cos`, `exp`, `log`, `cosh`, `tanh`, `abs`, and `sign`; Roughpipe uses `+`, `-`, `*`, `/`, `sin`, `cos`, `exp`, `log`, `cosh`, `tanh`, square, and cube. DSO and LLM-SR retain their own released operator/program spaces.
 
 ## 3. Main results
 
-Values are median [Q1, Q3] over 20 seeds, except deterministic Physics-LS. Lower MSE/NMSE/complexity is better; higher $R^2$ is better.
+Values are median [Q1, Q3] over 20 runs, except deterministic Linear-LS and Physics-LS. Lower MSE/NMSE/complexity is better; higher $R^2$ is better.
 For a validation-selected expression that is numerically invalid on held-out inputs, test metrics remain missing rather than selecting a fallback using test data; the `n` column reports the number of finite test predictions when this occurs.
 
 {table(result_rows, ['Method', 'Dataset', 'n', 'Test MSE', 'Test NMSE', 'Test R²', 'Complexity', 'Runtime (s)'])}
@@ -229,11 +238,11 @@ The representative run is the seed whose test MSE is closest to the method's med
 
 {"Physics-LS and PSE-aligned VEGA-SR have identical EMPS median test MSE. This shows that the current EMPS gain is attributable primarily to the injected Newton/friction template and coefficient fitting, not uniquely to VEGA-SR's structure-search procedure." if prior_equal else "Physics-LS quantifies how much of EMPS performance is explained by the injected Newton/friction templates without symbolic structure search."}
 
-For Roughpipe, VEGA-SR should be interpreted jointly through accuracy and complexity: it improves predictive error over reproduced PSE, while its selected polynomial is structurally larger. Runtime is descriptive rather than a hardware-normalized efficiency claim because PSE and VEGA-SR use GPUs/model inference whereas PySR and Operon use CPUs.
+On EMPS, LLM-SR converges to the same linear family as Linear-LS and closely matches PSE, whereas DSO and gplearn are weaker. On Roughpipe, LLM-SR improves over gplearn and DSO but remains below PSE, PySR and Operon. VEGA-SR achieves the lowest median error on both datasets, although its Roughpipe polynomial is structurally larger. Runtime is descriptive rather than a hardware-normalized efficiency claim because methods use different CPU/GPU hardware and stopping granularities.
 
 ## 6. Paper-ready result paragraph
 
-Under a common validation-score ranking protocol, we evaluated PSE, PSE-aligned VEGA-SR, PySR, and Operon over 20 seeds on the EMPS and Roughpipe real-world tasks. All methods used the same fixed train/validation/test partitions, and test metrics were excluded from the explicit Pareto-front ranking score. The current VEGA-SR implementation did evaluate test-domain predictions when constructing candidate fit records, so we do not claim a fully sealed test set during search. Table 1 reports median and interquartile-range test metrics. On EMPS, the PSE-aligned VEGA-SR configuration substantially reduces predictive error relative to reproduced PSE while adding only one common complexity node. However, a prior-only Physics-LS ablation attains the same solution, indicating that this gain is driven by the injected Newton/friction prior. On Roughpipe, VEGA-SR achieves lower median test error than reproduced PSE, PySR, and Operon, although this improvement is accompanied by a larger symbolic expression. These results support the benefit of physics-aligned candidate construction while also separating that benefit from the contribution of general symbolic search.
+We evaluated PSE-aligned VEGA-SR, PSE, PySR, Operon, gplearn, DSO and LLM-SR over 20 runs on the EMPS and Roughpipe measured-system tasks. Every method used the same fixed train/validation/test partitions, and test metrics were excluded from expression ranking; DSO retained its released native objective and stopping rule. On EMPS, LLM-SR recovered the linear baseline family and closely matched PSE, while VEGA-SR achieved the lowest median test MSE. The identical Physics-LS result shows that this EMPS improvement is explained primarily by the injected Newton/friction prior. On Roughpipe, VEGA-SR also achieved the lowest median test MSE, ahead of Operon, PSE and PySR, but selected a more complex polynomial. DSO, gplearn and LLM-SR were less accurate on Roughpipe under this protocol.
 
 ## 7. Important reporting caveats
 
@@ -241,7 +250,8 @@ Under a common validation-score ranking protocol, we evaluated PSE, PSE-aligned 
 2. Physics-LS is an ablation, not a general baseline, and is applicable only to EMPS.
 3. Runtime comparisons are not hardware-normalized and should not be presented as pure speedups.
 4. PySR test-domain failures are retained as failures rather than using test data to choose another Pareto expression; its finite-prediction count is shown in the main table.
-5. NGGP, DGSR, BMS, uDSR, TPSR, and wAIC were not added in this first extension because they require substantially heavier pretrained-model/dependency setup, and wAIC is available only for EMPS. PySR and Operon provide two directly released, representative search baselines under the strict split.
+5. DSO and LLM-SR reuse methods from the paper, but their EMPS/Roughpipe values are newly measured under this protocol; values from the 895-task comparison are not transplanted.
+6. The 90-second budget is a target with method-specific safe stopping boundaries, not a claim that every recorded process wall time is at most 90 seconds. Exact observed runtimes are reported in the table and case JSON files.
 
 ## 8. Artifact map and reproduction
 
@@ -252,7 +262,6 @@ Under a common validation-score ranking protocol, we evaluated PSE, PSE-aligned 
 - Combined case-level CSV: [`paper_artifacts/pse_realworld/all_results.csv`](./paper_artifacts/pse_realworld/all_results.csv)
 - Aggregated CSV: [`paper_artifacts/pse_realworld/summary.csv`](./paper_artifacts/pse_realworld/summary.csv)
 - Original PSE/VEGA report: [`paper_artifacts/pse_realworld/REPORT.md`](./paper_artifacts/pse_realworld/REPORT.md)
-- Integrity manifest: [`paper_artifacts/pse_realworld/SHA256SUMS`](./paper_artifacts/pse_realworld/SHA256SUMS)
 
 Regenerate the aggregate CSV and this document with:
 
