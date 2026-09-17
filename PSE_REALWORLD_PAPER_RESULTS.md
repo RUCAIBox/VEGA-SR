@@ -12,7 +12,7 @@ This experiment compares PSE-aligned VEGA-SR with PSE, PySR, Operon, gplearn, DS
 
 - Repeats: 20 runs (`0`–`19`) for every search method. Linear-LS and Physics-LS are deterministic and are run once per applicable dataset.
 - Search budget: the nominal search deadline is 90 seconds per formal case, with method-specific enforcement granularity. PSE, PySR, Operon, gplearn and LLM-SR stop at their next safe stage, iteration, generation or request boundary; DSO retains the paper configuration's fixed 5,000-sample work budget with a best-effort 90-second alarm. Actual runtime is always reported, and one-time VEGA-SR and LLM-SR model-service startup is excluded.
-- Selection: methods exposing candidate sets are ranked using validation data with $0.99^C/(1+\sqrt{\mathrm{MSE}_{val}})$, where $C$ is the common SymPy-tree complexity. DSO retains its native risk-seeking objective and stopping rule, consistent with the baseline protocol used elsewhere in the paper. Test metrics are not part of any ranking score. The current VEGA-SR fitter nevertheless evaluates candidate predictions on the test inputs while constructing fit records and may reject a numerically invalid expression, so this implementation does not satisfy the stronger claim that the test split remains completely unaccessed during search.
+- Selection: methods exposing candidate sets are ranked using validation data with $0.99^C/(1+\sqrt{\mathrm{MSE}_{val}})$, where $C$ is the common SymPy-tree complexity. DSO retains its native risk-seeking objective and stopping rule, consistent with the baseline protocol used elsewhere in the paper. These archived VEGA-SR rows predate the sealed-test implementation now on `main`; rerun them before using the stronger claim that the test split remains completely inaccessible during search.
 - Primary metrics: test MSE, NMSE, $R^2$, expression complexity, and descriptive runtime.
 - Data and source pinning: PSE commit `7105caba63e754150dd3b160443984456ec99cd7` and VEGA-SR reference commit `8187fd36d56092f0f0c8c31b16362989a6c61374`. Raw files are verified by the SHA-256 hashes in the YAML configuration.
 
@@ -116,7 +116,7 @@ We evaluated PSE-aligned VEGA-SR, PSE, PySR, Operon, gplearn, DSO and LLM-SR ove
 
 ## 7. Important reporting caveats
 
-1. The PSE article selected its reported EMPS Pareto expression using the test data. This reproduction introduces a validation split and excludes test metrics from the explicit ranking score, so the values are not intended as an exact reproduction of the paper figure. The current VEGA-SR fit-record implementation still evaluates test-domain predictions during candidate processing; a strictly sealed-test claim would require moving that evaluation after final selection and rerunning the affected experiment.
+1. The PSE article selected its reported EMPS Pareto expression using the test data. This reproduction introduces a validation split and excludes test metrics from the explicit ranking score, so the values are not intended as an exact reproduction of the paper figure. These archived VEGA-SR results were produced before test evaluation was moved after final selection and therefore require a rerun for a strictly sealed-test analysis.
 2. Physics-LS is an ablation, not a general baseline, and is applicable only to EMPS.
 3. Runtime comparisons are not hardware-normalized and should not be presented as pure speedups.
 4. PySR test-domain failures are retained as failures rather than using test data to choose another Pareto expression; its finite-prediction count is shown in the main table.

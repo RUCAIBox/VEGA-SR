@@ -533,13 +533,12 @@ def run_vega(
 
     vega.V11EvaluatorAgent.evaluate = constrained_evaluate
     started = time.time()
-    # TemplateFillTool and direct-evidence helpers calculate a test metric for
-    # every candidate.  In strict mode, never hand them the actual held-out
-    # rows: a validation copy is used solely as an internal compatibility split.
-    # The true test frame stays outside the pipeline and is evaluated below,
-    # after the validation-only selection has completed.
-    strict_test_isolation = bool(profile.get("strict_test_isolation", False))
-    pipeline_test = val.copy() if strict_test_isolation else test
+    # This wrapper applies a PSE-aligned validation selector after the core
+    # pipeline returns, so even the core's post-selection reporter must not see
+    # the true held-out rows. The actual test frame stays outside the pipeline
+    # and is evaluated only after that wrapper-level selection is complete.
+    strict_test_isolation = True
+    pipeline_test = test.iloc[0:0].copy()
     with TemporaryDirectory(prefix="pse_realworld_vega_") as tmpdir:
         dataset = vega.build_dataset_from_explicit_splits(train, val, pipeline_test, Path(tmpdir))
         dataset.source_tag = "pse_realworld"
@@ -598,8 +597,8 @@ def run_vega(
     result["pse_aligned_selection_metric"] = selection_metric
     result["pse_aligned_selection_candidates"] = selection_candidates
     result["strict_test_isolation"] = strict_test_isolation
-    result["test_rows_visible_to_search_pipeline"] = 0 if strict_test_isolation else len(test)
-    result["pipeline_compatibility_test_split"] = "validation_copy" if strict_test_isolation else "true_test"
+    result["test_rows_visible_to_search_pipeline"] = 0
+    result["pipeline_compatibility_test_split"] = "sealed_empty_placeholder"
     result["pipeline_compatibility_test_rows"] = len(pipeline_test)
     # The core pipeline reports the compatibility frame as ``n_test``.  Keep
     # the public result schema unambiguous: n_test always means the held-out
@@ -619,6 +618,28 @@ def run_vega(
     )
     result["allowed_operators"] = allowed
     enrich_result_metrics(result, train, val, test, features)
+    final_test_mse = finite_float(result.get("best_test_mse"))
+    if final_test_mse is None:
+        final_test_mse = finite_float(result.get("test_mse"))
+    test_prediction_valid = final_test_mse is not None
+    result["test_evaluation_phase"] = "post_wrapper_selection"
+    result["test_prediction_valid"] = test_prediction_valid
+    result["test_evaluation_error"] = (
+        None if test_prediction_valid else result.get("metric_eval_error") or "invalid_test_prediction"
+    )
+    try:
+        no_leakage_audit = json.loads(result.get("no_leakage_audit") or "{}")
+    except (TypeError, ValueError):
+        no_leakage_audit = {}
+    no_leakage_audit.update({
+        "test_split_used_for_selection": False,
+        "test_split_accessed_during_search": False,
+        "test_domain_predictions_computed_during_search": False,
+        "test_evaluation_phase": "post_wrapper_selection",
+        "test_evaluated_for_selected_expression_only": True,
+        "test_prediction_valid": test_prediction_valid,
+    })
+    result["no_leakage_audit"] = json.dumps(no_leakage_audit, ensure_ascii=False, sort_keys=True)
     expr = result.get("best_expr")
     result["selected_expression_uses_allowed_operators"] = expression_allowed(expr, normalized_allowed)
     if args.dataset == "emps":

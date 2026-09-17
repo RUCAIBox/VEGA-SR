@@ -35,7 +35,7 @@ execution:
       prior_mode: protected_templates
       selection_metric: validation_reward_eta_0.99
       reward_eta: 0.99
-      strict_test_isolation: false
+      strict_test_isolation: true
       controls:
         observer_input_mode: native
         enable_observer: true

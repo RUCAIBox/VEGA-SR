@@ -69,7 +69,7 @@ from llms.tasks.expression_refiner_llm import ExpressionRefinerLLM
 # =========================
 # 导入 tools 层
 # =========================
-from tools.dataset_loader import DatasetLoader
+from tools.dataset_loader import DatasetBundle, DatasetLoader
 from tools.template_fill_tool import TemplateFillTool
 from tools.algebraic_simplify_tool import AlgebraicSimplifyTool
 from tools.equivalence_check_tool import EquivalenceCheckTool
@@ -164,6 +164,8 @@ if METHOD_MODE not in {"planner_guided", "quality_upperbound", "text_only"}:
     raise ValueError(f"unsupported LLMSR_METHOD_MODE: {METHOD_MODE}")
 
 ALLOW_TRUE_EXPR_DIAGNOSTICS = os.environ.get("LLMSR_ALLOW_TRUE_EXPR_DIAGNOSTICS", "0").strip().lower() in {"1", "true", "yes", "y"}
+# Retained only to flag legacy configurations. The sealed-test implementation
+# never honors this switch for ranking or fallback selection.
 USE_TEST_FOR_SELECTION = os.environ.get("LLMSR_USE_TEST_FOR_SELECTION", "0").strip().lower() in {"1", "true", "yes", "y"}
 
 NO_LEAKAGE_MODE = True  # clean main build: always no-leakage
@@ -454,13 +456,9 @@ HIGH_DIM_CLEAN_MECH_RERANK_ABS_TOL = float(os.environ.get("LLMSR_HIGH_DIM_CLEAN_
 # data-driven / generic candidate is already directly evaluable and nearly
 # perfect on validation, do not let a high-flexibility shifted surrogate win
 # only because of the default scorer or simplifier order. The rule is
-# benchmark-name-free and uses only train/val/test data.
+# benchmark-name-free and uses only train/validation data.
 ENABLE_EVIDENCE_PRESERVING_SELECTION = os.environ.get("LLMSR_ENABLE_EVIDENCE_PRESERVING_SELECTION", "1").strip().lower() in {"1", "true", "yes", "y"}
 EVIDENCE_DIRECT_PROMOTION_VAL_TOL = float(os.environ.get("LLMSR_EVIDENCE_DIRECT_PROMOTION_VAL_TOL", "1e-8"))
-# Test split must not participate in model/candidate selection. It is computed
-# only for final reporting. Keep this False for fair evaluation.
-EVIDENCE_DIRECT_PROMOTION_USE_TEST = USE_TEST_FOR_SELECTION
-EVIDENCE_DIRECT_PROMOTION_TEST_TOL = float(os.environ.get("LLMSR_EVIDENCE_DIRECT_PROMOTION_TEST_TOL", "1e-6"))
 EVIDENCE_DIRECT_PROMOTION_MAX_EXPR_LEN = int(os.environ.get("LLMSR_EVIDENCE_DIRECT_PROMOTION_MAX_EXPR_LEN", "260"))
 EVIDENCE_DIRECT_PROMOTION_MAX_CANDIDATES = int(os.environ.get("LLMSR_EVIDENCE_DIRECT_PROMOTION_MAX_CANDIDATES", "64"))
 ENABLE_HUGE_CONSTANT_SURROGATE_PENALTY = os.environ.get("LLMSR_ENABLE_HUGE_CONSTANT_SURROGATE_PENALTY", "1").strip().lower() in {"1", "true", "yes", "y"}
@@ -815,7 +813,6 @@ def _result_performance_snapshot(item):
         "selection_metric": _safe_metric_float(_safe_get_attr(item, "selection_metric", None)) if item is not None else None,
         "small_sample_cv_mse": _safe_metric_float(_safe_get_attr(item, "small_sample_cv_mse", None)) if item is not None else None,
         "val_mse": _safe_metric_float(_safe_get_attr(item, "val_mse", None)) if item is not None else None,
-        "test_mse": _safe_metric_float(_safe_get_attr(item, "test_mse", None)) if item is not None else None,
         "score": _safe_metric_float(_safe_get_attr(item, "score", None)) if item is not None else None,
         "complexity": _safe_get_attr(item, "complexity", None) if item is not None else None,
     }
@@ -1259,7 +1256,6 @@ def summarize_scored_results(scored_results, top_k=3):
         lines.append(
             f"rank={i}; expr={_safe_get_attr(item, 'simplified_expression', None)}; "
             f"val_mse={_safe_get_attr(item, 'val_mse', None)}; "
-            f"test_mse={_safe_get_attr(item, 'test_mse', None)}; "
             f"complexity={_safe_get_attr(item, 'complexity', None)}; "
             f"score={_safe_get_attr(item, 'score', None)}"
         )
@@ -4403,18 +4399,19 @@ def collect_tasks_from_benchmark_csv(csv_path: str):
 
 
 def build_dataset_from_explicit_splits(train_df, val_df, test_df, tmpdir: Path):
-    combined_df = pd.concat([train_df, val_df, test_df], axis=0, ignore_index=True)
-    tmp_csv = tmpdir / f"tmp_dataset_{hashlib.md5(str(time.time()).encode()).hexdigest()[:8]}.csv"
-    combined_df.to_csv(tmp_csv, index=False)
-    dataset_loader = DatasetLoader()
-    dataset = dataset_loader.load_csv(csv_path=str(tmp_csv), target_name="y")
     feature_names = [c for c in train_df.columns if c != "y"]
-    dataset.df = combined_df.copy()
-    dataset.train_df = train_df.copy()
-    dataset.val_df = val_df.copy()
-    dataset.test_df = test_df.copy()
-    dataset.feature_names = feature_names
-    dataset.target_name = "y"
+    # ``df`` is search-visible context, so it must contain only fitting and
+    # validation rows.  Keep the held-out split in its dedicated field and do
+    # not route it through DatasetLoader, which would mix and re-split rows.
+    search_df = pd.concat([train_df, val_df], axis=0, ignore_index=True)
+    dataset = DatasetBundle(
+        df=search_df.copy(),
+        feature_names=feature_names,
+        target_name="y",
+        train_df=train_df.copy(),
+        val_df=val_df.copy(),
+        test_df=test_df.copy(),
+    )
     dataset.source_tag = ""
     return dataset
 
@@ -7298,7 +7295,6 @@ def build_evaluator_results_for_critic(evaluation, current_best=None, top_k=None
         current_best_row = {
             "expr": _safe_get_attr(best, "simplified_expression", None),
             "val_mse": _safe_get_attr(best, "val_mse", None),
-            "test_mse": _safe_get_attr(best, "test_mse", None),
             "complexity": _safe_get_attr(best, "complexity", None),
             "score": _safe_get_attr(best, "score", None),
             "selection_metric": _safe_get_attr(best, "selection_metric", None),
@@ -7313,7 +7309,6 @@ def build_evaluator_results_for_critic(evaluation, current_best=None, top_k=None
                 "rank": idx,
                 "expression": row.get("expr") or row.get("expression"),
                 "val_mse": row.get("val_mse"),
-                "test_mse": row.get("test_mse"),
                 "complexity": row.get("complexity"),
                 "score": row.get("score"),
                 "selection_metric": row.get("selection_metric"),
@@ -7325,7 +7320,6 @@ def build_evaluator_results_for_critic(evaluation, current_best=None, top_k=None
                 "rank": idx,
                 "expression": _safe_get_attr(item, "simplified_expression", None),
                 "val_mse": _safe_get_attr(item, "val_mse", None),
-                "test_mse": _safe_get_attr(item, "test_mse", None),
                 "complexity": _safe_get_attr(item, "complexity", None),
                 "score": _safe_get_attr(item, "score", None),
                 "selection_metric": _safe_get_attr(item, "selection_metric", None),
@@ -7975,6 +7969,88 @@ def populate_visual_trace_fields(
     result["visual_trace"] = json.dumps(make_json_safe(visual_trace), ensure_ascii=False)
 
 
+def evaluate_selected_expression_on_test(current_best, dataset):
+    """Evaluate exactly one already-selected expression on the held-out split.
+
+    This function is called only from ``_finalize_result``, after proposal,
+    fitting, validation ranking, Critic feedback, and refinement have ended.
+    A test-domain failure is reported without selecting a fallback candidate.
+    """
+    report = {
+        "phase": "post_selection",
+        "selected_expression_only": True,
+        "test_rows": None,
+        "prediction_valid": False,
+        "test_mse": None,
+        "error": None,
+    }
+    if current_best is None:
+        report["error"] = "no_selected_expression"
+        return report
+
+    # Clear any legacy/custom value before computing the sealed evaluation.
+    setattr(current_best, "test_mse", None)
+    expression = str(_safe_get_attr(current_best, "simplified_expression", "") or "").strip()
+    if not expression:
+        report["error"] = "selected_expression_missing"
+        return report
+
+    try:
+        test_df = dataset.test_df
+        target_name = str(getattr(dataset, "target_name", "y") or "y")
+        report["test_rows"] = int(len(test_df))
+        if len(test_df) == 0:
+            report["error"] = "test_split_empty"
+            return report
+        target = np.asarray(test_df[target_name], dtype=float).reshape(-1)
+        prediction = np.asarray(
+            evaluate_expression_on_df(expression, test_df),
+            dtype=float,
+        )
+        if prediction.ndim == 0:
+            prediction = np.full(target.shape, float(prediction), dtype=float)
+        prediction = prediction.reshape(-1)
+        if len(prediction) != len(target):
+            report["error"] = "prediction_length_mismatch"
+            return report
+        if not np.isfinite(target).all() or not np.isfinite(prediction).all():
+            report["error"] = "non_finite_test_prediction"
+            return report
+        test_mse = float(np.mean((prediction - target) ** 2))
+        if not np.isfinite(test_mse):
+            report["error"] = "non_finite_test_mse"
+            return report
+        setattr(current_best, "test_mse", test_mse)
+        report["prediction_valid"] = True
+        report["test_mse"] = test_mse
+        return report
+    except Exception as exc:
+        report["error"] = f"{type(exc).__name__}: {exc}"
+        return report
+
+
+def _append_sealed_test_audit(result, test_report):
+    raw = result.get("no_leakage_audit")
+    if isinstance(raw, str):
+        try:
+            audit = json.loads(raw)
+        except Exception:
+            audit = {}
+    elif isinstance(raw, dict):
+        audit = dict(raw)
+    else:
+        audit = {}
+    audit.update({
+        "test_split_accessed_during_search": False,
+        "test_domain_predictions_computed_during_search": False,
+        "test_evaluation_phase": "post_selection",
+        "test_evaluated_for_selected_expression_only": True,
+        "test_prediction_valid": bool(test_report.get("prediction_valid", False)),
+        "test_evaluation_error": test_report.get("error"),
+    })
+    result["no_leakage_audit"] = json.dumps(make_json_safe(audit), ensure_ascii=False)
+
+
 def _finalize_result(
     result,
     timer,
@@ -7988,6 +8064,13 @@ def _finalize_result(
     refine_round_expr_counts,
     row_meta=None,
 ):
+    test_report = evaluate_selected_expression_on_test(current_best, dataset)
+    result["n_test"] = test_report.get("test_rows")
+    result["test_evaluation_phase"] = "post_selection"
+    result["test_prediction_valid"] = bool(test_report.get("prediction_valid", False))
+    result["test_evaluation_error"] = test_report.get("error")
+    _append_sealed_test_audit(result, test_report)
+
     result["runtime_sec"] = time.time() - start
     result["step_times_json"] = json.dumps(make_json_safe(timer.as_dict()), ensure_ascii=False)
     result["meta_decisions"] = json.dumps(make_json_safe(meta_decisions), ensure_ascii=False)
@@ -8435,7 +8518,7 @@ def _prediction_residual_diagnostic_image(dataset, row_meta, current_best, round
 
     df = None
     split_name = "validation"
-    for attr, name in (("val_df", "validation"), ("test_df", "test"), ("train_df", "train"), ("df", "all")):
+    for attr, name in (("val_df", "validation"), ("train_df", "train"), ("df", "search")):
         candidate = getattr(dataset, attr, None)
         if candidate is not None and len(candidate) > 0 and target_name in candidate.columns:
             df = candidate.copy()
@@ -9646,7 +9729,13 @@ def lightweight_prefilter_candidates(candidate_exprs, dataset, timer=None, prefi
     small_train = dataset.train_df.sample(keep_n, random_state=123).reset_index(drop=True)
     with TemporaryDirectory() as td:
         tmpdir = Path(td)
-        small_dataset = build_dataset_from_explicit_splits(small_train, dataset.val_df, dataset.test_df, tmpdir)
+        sealed_test_placeholder = dataset.val_df.iloc[0:0].copy()
+        small_dataset = build_dataset_from_explicit_splits(
+            small_train,
+            dataset.val_df,
+            sealed_test_placeholder,
+            tmpdir,
+        )
         small_dataset.source_tag = getattr(dataset, "source_tag", "")
         share_candidate_search_audit(dataset, small_dataset)
         _, _, _, small_scored = evaluate_candidate_expressions(
@@ -12612,7 +12701,7 @@ class DirectVerifiedResult:
     """
     simplified_expression: str
     val_mse: float
-    test_mse: float
+    test_mse: Optional[float]
     train_mse: float
     complexity: int
     score: float
@@ -12695,23 +12784,20 @@ def should_accept_candidate_update(candidate, incumbent, min_rel_improvement_for
     return bool(rel_gain >= float(min_rel_improvement_for_surrogate))
 
 
-def _direct_mse_for_expr(expr, dataset):
-    """Evaluate an already numeric/free-parameter-free expression on train/val/test."""
+def _direct_train_val_mse_for_expr(expr, dataset):
+    """Evaluate a numeric/free-parameter-free expression on search-visible data."""
     try:
         pred_train = evaluate_expression_on_df(expr, dataset.train_df)
         y_train = np.asarray(dataset.train_df[dataset.target_name], dtype=float)
         pred_val = evaluate_expression_on_df(expr, dataset.val_df)
         y_val = np.asarray(dataset.val_df[dataset.target_name], dtype=float)
-        pred_test = evaluate_expression_on_df(expr, dataset.test_df)
-        y_test = np.asarray(dataset.test_df[dataset.target_name], dtype=float)
-        for arr in [pred_train, pred_val, pred_test, y_train, y_val, y_test]:
+        for arr in [pred_train, pred_val, y_train, y_val]:
             arr = np.asarray(arr, dtype=float)
             if arr.size == 0 or not np.isfinite(arr).all():
                 return None
         return {
             "train_mse": float(np.mean((np.asarray(pred_train, dtype=float) - y_train) ** 2)),
             "val_mse": float(np.mean((np.asarray(pred_val, dtype=float) - y_val) ** 2)),
-            "test_mse": float(np.mean((np.asarray(pred_test, dtype=float) - y_test) ** 2)),
         }
     except Exception:
         return None
@@ -12721,9 +12807,9 @@ def build_direct_verified_evidence_results(candidate_exprs, dataset, feature_nam
     """Promote directly evaluable evidence candidates that are nearly exact.
 
     This is deliberately generic: it does not inspect benchmark names or true
-    expressions. It simply re-checks raw candidate expressions against the held-out
-    validation/test splits and constructs lightweight result objects for near-exact
-    candidates.
+    expressions. It simply re-checks raw candidate expressions against fitting
+    and validation data and constructs lightweight result objects for near-exact
+    candidates. The test split remains sealed until final selection is complete.
     """
     if not ENABLE_EVIDENCE_PRESERVING_SELECTION:
         return []
@@ -12743,34 +12829,26 @@ def build_direct_verified_evidence_results(candidate_exprs, dataset, feature_nam
             continue
         if _expression_has_free_parameters(expr, feature_names):
             continue
-        metrics = _direct_mse_for_expr(expr, dataset)
+        metrics = _direct_train_val_mse_for_expr(expr, dataset)
         if not metrics:
             continue
         val_mse = _safe_metric_float(metrics.get("val_mse"))
-        test_mse = _safe_metric_float(metrics.get("test_mse"))
         train_mse = _safe_metric_float(metrics.get("train_mse"))
-        if val_mse is None or test_mse is None or train_mse is None:
+        if val_mse is None or train_mse is None:
             continue
-        # Primary promotion path: near-exact validation. By default, the test
-        # split is NOT used for promotion or ranking; test_mse is stored only for
-        # final reporting. Set LLMSR_USE_TEST_FOR_SELECTION=1 only for debugging.
-        test_ok = True
-        if EVIDENCE_DIRECT_PROMOTION_USE_TEST:
-            test_ok = bool(test_mse <= EVIDENCE_DIRECT_PROMOTION_TEST_TOL)
-        if val_mse <= EVIDENCE_DIRECT_PROMOTION_VAL_TOL and test_ok:
+        if val_mse <= EVIDENCE_DIRECT_PROMOTION_VAL_TOL:
             complexity = len(expr.replace(" ", ""))
             score = -float(val_mse) - COMPLEXITY_WEIGHT * float(complexity)
             out.append(DirectVerifiedResult(
                 simplified_expression=expr,
                 val_mse=float(val_mse),
-                test_mse=float(test_mse),
+                test_mse=None,
                 train_mse=float(train_mse),
                 complexity=int(complexity),
                 score=float(score),
             ))
             if len(out) >= max_candidates:
                 break
-    # Do not sort by test_mse. Test is reporting-only in the fair path.
     out.sort(key=lambda x: (float(x.val_mse), float(x.train_mse), int(x.complexity)))
     return out
 
@@ -13173,7 +13251,6 @@ class EvaluatorAgent:
             evaluation_table.append({
                 "expr": _safe_get_attr(item, "simplified_expression", None),
                 "val_mse": _safe_get_attr(item, "val_mse", None),
-                "test_mse": _safe_get_attr(item, "test_mse", None),
                 "complexity": _safe_get_attr(item, "complexity", None),
                 "score": _safe_get_attr(item, "score", None),
                 "selection_metric": _safe_get_attr(item, "selection_metric", None),
@@ -13719,7 +13796,6 @@ class RefinerAgent:
         current_candidate = {
             "expr": current_best_expr,
             "val_mse": _safe_get_attr(current_best, "val_mse", None) if current_best is not None else None,
-            "test_mse": _safe_get_attr(current_best, "test_mse", None) if current_best is not None else None,
             "complexity": _safe_get_attr(current_best, "complexity", None) if current_best is not None else None,
             "score": _safe_get_attr(current_best, "score", None) if current_best is not None else None,
         }
@@ -13928,7 +14004,8 @@ def _run_core_pipeline(dataset, row_meta):
         "n_features": len(dataset.feature_names),
         "n_train": len(dataset.train_df),
         "n_val": len(dataset.val_df),
-        "n_test": len(dataset.test_df),
+        # Filled only by the post-selection reporter.
+        "n_test": None,
         "valid_formula_found": False,
         "num_candidate_exprs": 0,
         "raw_exprs": None,
@@ -14085,11 +14162,12 @@ def _run_core_pipeline(dataset, row_meta):
             "history_memory_enabled": bool(ALLOW_HISTORY_MEMORY or ENABLE_MEMORY_PRIOR),
             "true_expression_diagnostics_enabled": bool(ALLOW_TRUE_EXPR_DIAGNOSTICS),
             "true_expression_used_for_generation_or_selection": False,
-            "test_split_used_for_selection": bool(USE_TEST_FOR_SELECTION),
+            "test_split_used_for_selection": False,
+            "legacy_test_selection_switch_requested_but_ignored": bool(USE_TEST_FOR_SELECTION),
             "data_driven_direct_candidate_injection": bool(DATA_DRIVEN_FEATURE_SEEDS_AS_CANDIDATES),
             "high_dim_data_driven_evidence_bridge": bool(ENABLE_HIGH_DIM_DATA_DRIVEN_CANDIDATE_BRIDGE),
             "data_driven_mode": "candidate_upperbound" if DATA_DRIVEN_FEATURE_SEEDS_AS_CANDIDATES else ("highdim_evidence_bridge" if ENABLE_HIGH_DIM_DATA_DRIVEN_CANDIDATE_BRIDGE else "evidence_only"),
-            "selection_uses_validation_only": not bool(USE_TEST_FOR_SELECTION) and not bool(tiny_val_train_cv_active),
+            "selection_uses_validation_only": not bool(tiny_val_train_cv_active),
             "selection_uses_train_cv_for_tiny_val": bool(tiny_val_train_cv_active),
             "best_expr_source": str(_safe_get_attr(current_best, "source", "scored_result")) if current_best is not None else None,
         }), ensure_ascii=False)
@@ -15379,10 +15457,8 @@ def _run_core_pipeline(dataset, row_meta):
             after_snapshot = _result_performance_snapshot(current_best)
 
             val_mse_improvement = _metric_improvement(before_snapshot.get("val_mse"), after_snapshot.get("val_mse"))
-            test_mse_improvement = _metric_improvement(before_snapshot.get("test_mse"), after_snapshot.get("test_mse"))
             score_improvement = _metric_improvement(before_snapshot.get("score"), after_snapshot.get("score"))
             candidate_val_gain = _metric_improvement(before_snapshot.get("val_mse"), round_best_snapshot.get("val_mse"))
-            candidate_test_gain = _metric_improvement(before_snapshot.get("test_mse"), round_best_snapshot.get("test_mse"))
             candidate_score_gain = _metric_improvement(before_snapshot.get("score"), round_best_snapshot.get("score"))
 
             refine_history.append({
@@ -15394,12 +15470,9 @@ def _run_core_pipeline(dataset, row_meta):
                 "round_candidate_best": round_best_snapshot,
                 "best_after_round": after_snapshot,
                 "val_mse_improvement": val_mse_improvement,
-                "test_mse_improvement": test_mse_improvement,
                 "score_improvement": score_improvement,
                 "relative_val_mse_improvement": _relative_metric_improvement(before_snapshot.get("val_mse"), after_snapshot.get("val_mse")),
-                "relative_test_mse_improvement": _relative_metric_improvement(before_snapshot.get("test_mse"), after_snapshot.get("test_mse")),
                 "candidate_val_mse_gain_vs_before": candidate_val_gain,
-                "candidate_test_mse_gain_vs_before": candidate_test_gain,
                 "candidate_score_gain_vs_before": candidate_score_gain,
             })
             finalize_refine_round_timing(
@@ -15412,15 +15485,11 @@ def _run_core_pipeline(dataset, row_meta):
                     "improved": bool(improved),
                     "best_expr_before_round": before_snapshot.get("expr"),
                     "best_val_mse_before_round": before_snapshot.get("val_mse"),
-                    "best_test_mse_before_round": before_snapshot.get("test_mse"),
                     "round_candidate_best_expr": round_best_snapshot.get("expr"),
                     "round_candidate_best_val_mse": round_best_snapshot.get("val_mse"),
-                    "round_candidate_best_test_mse": round_best_snapshot.get("test_mse"),
                     "best_expr_after_round": after_snapshot.get("expr"),
                     "best_val_mse_after_round": after_snapshot.get("val_mse"),
-                    "best_test_mse_after_round": after_snapshot.get("test_mse"),
                     "val_mse_improvement": val_mse_improvement,
-                    "test_mse_improvement": test_mse_improvement,
                     "score_improvement": score_improvement,
                 },
             )

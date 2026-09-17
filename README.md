@@ -95,11 +95,13 @@ an EMPS-only Physics-LS ablation. The paper-ready report is
 sanitized machine-readable outputs are under
 [`paper_artifacts/pse_realworld/`](paper_artifacts/pse_realworld/).
 
-The explicit candidate-ranking score uses validation metrics rather than test
-metrics. The current VEGA-SR fitter nevertheless evaluates test-domain
-predictions while constructing candidate fit records and may reject a
-numerically invalid expression; this release therefore does not claim that the
-test split remained completely unaccessed during search.
+The test split is sealed throughout proposal, parameter fitting, candidate
+validation, Critic feedback and refinement. Candidate fit records contain only
+fitting/validation metrics. After the final expression has been selected, that
+one expression is evaluated once on the test split; a non-finite held-out
+prediction is reported as a failure and never triggers fallback or reselection.
+Results produced with an earlier revision must be rerun before using this
+stronger sealed-test guarantee.
 
 To launch the model service with public defaults:
 

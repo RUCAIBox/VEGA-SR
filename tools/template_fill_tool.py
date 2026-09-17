@@ -43,7 +43,10 @@ class TemplateFillTool:
     - 输入是 LLM 生成的表达式字符串，例如 "a * x0 / (b + x1)"
     - 自动识别自由参数，例如 a, b
     - 用 least_squares 拟合这些参数
-    - 返回数值化后的拟合表达式和误差
+    - 返回数值化后的拟合表达式和 train/validation 误差
+
+    ``test_df`` is deliberately not read here.  Test evaluation happens once,
+    after the search loop has selected its final expression.
     """
 
     # 你可以按需扩展这一组“默认不是参数”的符号
@@ -206,12 +209,9 @@ class TemplateFillTool:
 
             train_y = dataset.train_df[dataset.target_name].to_numpy(dtype=float)
             val_y = dataset.val_df[dataset.target_name].to_numpy(dtype=float)
-            test_y = dataset.test_df[dataset.target_name].to_numpy(dtype=float)
-
             if len(param_symbols) == 0:
                 train_pred = self._predict(func, dataset.train_df, dataset.feature_names, np.array([]))
                 val_pred = self._predict(func, dataset.val_df, dataset.feature_names, np.array([]))
-                test_pred = self._predict(func, dataset.test_df, dataset.feature_names, np.array([]))
 
                 return FitResult(
                     expression=expr_str,
@@ -219,7 +219,7 @@ class TemplateFillTool:
                     parameters={},
                     train_mse=float(mean_squared_error(train_y, train_pred)),
                     val_mse=float(mean_squared_error(val_y, val_pred)),
-                    test_mse=float(mean_squared_error(test_y, test_pred)),
+                    test_mse=None,
                     success=True,
                     error_message=None,
                 )
@@ -237,7 +237,6 @@ class TemplateFillTool:
 
             best_params = None
             best_cost = np.inf
-            best_success = False
 
             # 多次随机初始化，提高拟合稳定性
             rng = np.random.default_rng(42)
@@ -297,7 +296,6 @@ class TemplateFillTool:
                     if res.cost < best_cost and np.all(np.isfinite(res.x)):
                         best_cost = res.cost
                         best_params = res.x
-                        best_success = res.success
                 except Exception:
                     continue
 
@@ -315,19 +313,18 @@ class TemplateFillTool:
 
             train_pred = self._predict(func, dataset.train_df, dataset.feature_names, best_params)
             val_pred = self._predict(func, dataset.val_df, dataset.feature_names, best_params)
-            test_pred = self._predict(func, dataset.test_df, dataset.feature_names, best_params)
 
             param_dict = {str(sym): float(val) for sym, val in zip(param_symbols, best_params)}
 
             # 把参数代回表达式，得到拟合后的数值表达式
             fitted_expr = expr.subs({sym: val for sym, val in zip(param_symbols, best_params)})
+            # Search-time validity is defined only on fitting and validation
+            # data. A selected expression that is invalid on held-out inputs is
+            # reported as such after selection; it never triggers fallback to a
+            # different candidate.
             fit_success = bool(
-                best_success
-                or (
-                    np.all(np.isfinite(train_pred))
-                    and np.all(np.isfinite(val_pred))
-                    and np.all(np.isfinite(test_pred))
-                )
+                np.all(np.isfinite(train_pred))
+                and np.all(np.isfinite(val_pred))
             )
 
             return FitResult(
@@ -336,7 +333,7 @@ class TemplateFillTool:
                 parameters=param_dict,
                 train_mse=float(mean_squared_error(train_y, train_pred)),
                 val_mse=float(mean_squared_error(val_y, val_pred)),
-                test_mse=float(mean_squared_error(test_y, test_pred)),
+                test_mse=None,
                 success=fit_success,
                 error_message=None,
             )
